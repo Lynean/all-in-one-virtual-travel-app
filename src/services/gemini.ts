@@ -14,7 +14,7 @@ export async function generateAIResponse(userMessage: string, destination?: stri
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const systemPrompt = `You are an expert travel guide assistant helping tourists navigate their destination${destination ? ` (${destination})` : ''}. 
 
@@ -45,6 +45,9 @@ User question: ${userMessage}`;
       }
       if (error.message.includes('quota')) {
         return "⚠️ API quota exceeded. Please check your Gemini API usage limits.";
+      }
+      if (error.message.includes('not found') || error.message.includes('404')) {
+        return "⚠️ Model not available. Using fallback response:\n\nBased on travel forums and guides, here are some tips for your destination:\n\n• Check visa requirements and passport validity (6+ months)\n• Download offline maps and translation apps\n• Research local transportation options and prices\n• Get travel insurance and register with embassy if needed\n• Pack according to local climate and cultural norms\n\nFor real-time AI assistance, please check your API configuration or try again later.";
       }
     }
     
