@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import { Send, Loader, Sparkles } from 'lucide-react';
+import { Send, Loader, Sparkles, AlertCircle } from 'lucide-react';
+import { generateAIResponse } from '../services/gemini';
 
 export const AIGuide: React.FC = () => {
   const { chatHistory, addMessage, destination } = useStore();
@@ -20,20 +21,15 @@ export const AIGuide: React.FC = () => {
     addMessage('user', userMessage);
     setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        `Great question about ${destination || 'your destination'}! Based on local forums and travel guides, here's what I found:\n\n• Most travelers recommend getting a local SIM card at the airport for better rates\n• Public transportation is reliable and affordable - consider getting a multi-day pass\n• Popular areas to visit include the historic district and waterfront\n• Local markets are best visited in the morning for fresh produce and better prices\n\nWould you like specific recommendations for accommodations or restaurants?`,
-        
-        `Here's a comprehensive checklist for your arrival:\n\n1. Download these essential apps:\n   • Local transit app for real-time schedules\n   • Translation app for communication\n   • Food delivery apps (popular local ones)\n\n2. Transportation tips:\n   • Airport to city: Express train is fastest (30 min, $15)\n   • Taxi meters should start at $3-5\n   • Ride-sharing apps are widely available\n\n3. First-day essentials:\n   • Get local currency from ATM (better rates than exchange)\n   • Purchase transit card at convenience stores\n   • Register at your embassy if staying long-term`,
-        
-        `Regarding local marketplace prices, here's what the community says:\n\n• Tourist areas typically charge 30-50% more\n• Bargaining is expected at street markets\n• Reasonable prices for common items:\n  - Street food: $2-5\n  - Local restaurant meal: $8-15\n  - Taxi per km: $0.50-1\n  - Bottled water: $0.50-1\n\nBetter alternatives nearby:\n• Local market 2 blocks east (20% cheaper)\n• Neighborhood shopping district (authentic prices)\n• Supermarkets for packaged goods\n\nWould you like directions to any of these locations?`,
-      ];
-
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-      addMessage('assistant', randomResponse);
+    try {
+      const aiResponse = await generateAIResponse(userMessage, destination);
+      addMessage('assistant', aiResponse);
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      addMessage('assistant', '⚠️ Sorry, I encountered an error. Please try again.');
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const quickPrompts = [
@@ -45,6 +41,8 @@ export const AIGuide: React.FC = () => {
     'Emergency contacts and hospitals',
   ];
 
+  const hasApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
   return (
     <div className="container mx-auto px-4 py-6 max-w-4xl">
       <div className="bg-white neo-border neo-shadow-lg flex flex-col h-[calc(100vh-250px)]">
@@ -53,12 +51,25 @@ export const AIGuide: React.FC = () => {
             <div className="bg-[#00F0FF] neo-border p-2">
               <Sparkles className="w-6 h-6" strokeWidth={3} />
             </div>
-            <div>
+            <div className="flex-1">
               <h2 className="text-xl font-bold uppercase text-white">AI Tour Guide</h2>
-              <p className="text-xs text-white uppercase">Powered by local insights & forums</p>
+              <p className="text-xs text-white uppercase">Powered by Google Gemini AI</p>
             </div>
+            {!hasApiKey && (
+              <div className="bg-[#FFD700] neo-border p-2">
+                <AlertCircle className="w-5 h-5" strokeWidth={3} />
+              </div>
+            )}
           </div>
         </div>
+
+        {!hasApiKey && (
+          <div className="bg-[#FFD700] neo-border border-t-0 border-l-0 border-r-0 p-4">
+            <p className="font-mono text-sm font-bold">
+              ⚠️ API KEY REQUIRED: Add your Gemini API key to .env file to enable AI features
+            </p>
+          </div>
+        )}
 
         {chatHistory.length === 0 && (
           <div className="p-6 flex-1 overflow-y-auto">

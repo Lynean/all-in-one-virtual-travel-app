@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader } from '@googlemaps/js-api-loader';
-import { Navigation, MapPin, Search } from 'lucide-react';
+import { Navigation, MapPin, Search, AlertCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 export const MapView: React.FC = () => {
@@ -8,32 +8,50 @@ export const MapView: React.FC = () => {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [userMarker, setUserMarker] = useState<google.maps.Marker | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const { currentLocation, setCurrentLocation } = useStore();
 
+  const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+
   useEffect(() => {
+    if (!API_KEY) {
+      setMapError('Google Maps API key not found. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file');
+      setIsLoading(false);
+      return;
+    }
+
     const loader = new Loader({
-      apiKey: 'AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8',
+      apiKey: API_KEY,
       version: 'weekly',
       libraries: ['places'],
     });
 
-    loader.load().then(() => {
-      if (mapRef.current) {
-        const mapInstance = new google.maps.Map(mapRef.current, {
-          center: { lat: 40.7128, lng: -74.006 },
-          zoom: 13,
-          styles: [
-            {
-              featureType: 'all',
-              elementType: 'geometry',
-              stylers: [{ saturation: 100 }],
-            },
-          ],
-        });
-        setMap(mapInstance);
-      }
-    });
-  }, []);
+    loader
+      .load()
+      .then(() => {
+        if (mapRef.current) {
+          const mapInstance = new google.maps.Map(mapRef.current, {
+            center: { lat: 40.7128, lng: -74.006 },
+            zoom: 13,
+            styles: [
+              {
+                featureType: 'all',
+                elementType: 'geometry',
+                stylers: [{ saturation: 100 }],
+              },
+            ],
+          });
+          setMap(mapInstance);
+          setIsLoading(false);
+        }
+      })
+      .catch((error) => {
+        console.error('Error loading Google Maps:', error);
+        setMapError('Failed to load Google Maps. Please check your API key and ensure the Maps JavaScript API is enabled.');
+        setIsLoading(false);
+      });
+  }, [API_KEY]);
 
   const handleGetLocation = () => {
     if (navigator.geolocation) {
@@ -116,45 +134,87 @@ export const MapView: React.FC = () => {
     <div className="container mx-auto px-4 py-6 max-w-6xl">
       <div className="bg-white neo-border neo-shadow-lg overflow-hidden">
         <div className="bg-[#FF005C] p-4 neo-border border-t-0 border-l-0 border-r-0">
-          <h2 className="text-2xl font-bold uppercase text-white mb-4">Interactive Map</h2>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-2xl font-bold uppercase text-white flex-1">Interactive Map</h2>
+            {!API_KEY && (
+              <div className="bg-[#FFD700] neo-border p-2">
+                <AlertCircle className="w-5 h-5" strokeWidth={3} />
+              </div>
+            )}
+          </div>
           
-          <div className="flex gap-2 mb-3">
-            <div className="flex-1 flex">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder="Search location..."
-                className="flex-1 px-4 py-3 neo-border border-r-0 bg-white text-black font-mono focus:outline-none"
-              />
-              <button
-                onClick={handleSearch}
-                className="bg-[#00F0FF] neo-border px-6 py-3 font-bold uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow-sm transition-all"
-              >
-                <Search className="w-5 h-5" strokeWidth={3} />
-              </button>
-            </div>
-            <button
-              onClick={handleGetLocation}
-              className="bg-[#FFD700] neo-border px-6 py-3 font-bold uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow-sm transition-all flex items-center gap-2"
-            >
-              <Navigation className="w-5 h-5" strokeWidth={3} />
-              <span className="hidden sm:inline">MY LOCATION</span>
-            </button>
-          </div>
+          {!mapError && (
+            <>
+              <div className="flex gap-2 mb-3">
+                <div className="flex-1 flex">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                    placeholder="Search location..."
+                    className="flex-1 px-4 py-3 neo-border border-r-0 bg-white text-black font-mono focus:outline-none"
+                    disabled={!map}
+                  />
+                  <button
+                    onClick={handleSearch}
+                    disabled={!map}
+                    className="bg-[#00F0FF] neo-border px-6 py-3 font-bold uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Search className="w-5 h-5" strokeWidth={3} />
+                  </button>
+                </div>
+                <button
+                  onClick={handleGetLocation}
+                  disabled={!map}
+                  className="bg-[#FFD700] neo-border px-6 py-3 font-bold uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Navigation className="w-5 h-5" strokeWidth={3} />
+                  <span className="hidden sm:inline">MY LOCATION</span>
+                </button>
+              </div>
 
-          <div className="bg-white neo-border p-3 flex items-center gap-2">
-            <MapPin className="w-5 h-5" strokeWidth={3} />
-            <span className="font-mono text-sm">
-              {currentLocation
-                ? `${currentLocation.lat.toFixed(4)}, ${currentLocation.lng.toFixed(4)}`
-                : 'Location not set'}
-            </span>
-          </div>
+              <div className="bg-white neo-border p-3 flex items-center gap-2">
+                <MapPin className="w-5 h-5" strokeWidth={3} />
+                <span className="font-mono text-sm">
+                  {currentLocation
+                    ? `${currentLocation.lat.toFixed(4)}, ${currentLocation.lng.toFixed(4)}`
+                    : 'Location not set'}
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
-        <div ref={mapRef} className="w-full h-[500px] neo-border border-t-0" />
+        {mapError ? (
+          <div className="w-full h-[500px] neo-border border-t-0 bg-[#FFD700] flex items-center justify-center p-8">
+            <div className="bg-white neo-border p-6 max-w-md">
+              <div className="flex items-center gap-3 mb-4">
+                <AlertCircle className="w-8 h-8 text-[#FF005C]" strokeWidth={3} />
+                <h3 className="font-bold uppercase text-lg">Map Configuration Required</h3>
+              </div>
+              <p className="font-mono text-sm mb-4">{mapError}</p>
+              <div className="bg-[#00F0FF] neo-border p-4">
+                <p className="font-mono text-xs font-bold mb-2">SETUP INSTRUCTIONS:</p>
+                <ol className="font-mono text-xs space-y-1 list-decimal list-inside">
+                  <li>Get a free API key from Google Cloud Console</li>
+                  <li>Enable Maps JavaScript API</li>
+                  <li>Add to .env file: VITE_GOOGLE_MAPS_API_KEY=your_key</li>
+                  <li>Restart the dev server</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        ) : isLoading ? (
+          <div className="w-full h-[500px] neo-border border-t-0 bg-white flex items-center justify-center">
+            <div className="text-center">
+              <Loader className="w-12 h-12 animate-spin mx-auto mb-4" strokeWidth={3} />
+              <p className="font-mono font-bold uppercase">Loading Map...</p>
+            </div>
+          </div>
+        ) : (
+          <div ref={mapRef} className="w-full h-[500px] neo-border border-t-0" />
+        )}
 
         <div className="bg-[#00F0FF] p-4 neo-border border-b-0 border-l-0 border-r-0">
           <p className="font-mono text-sm font-bold uppercase">
