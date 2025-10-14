@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader } from '@googlemaps/js-api-loader';
-import { Navigation, MapPin, Search, AlertCircle } from 'lucide-react';
+import { Loader as GoogleMapsLoader } from '@googlemaps/js-api-loader';
+import { Navigation, MapPin, Search, AlertCircle, Loader } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 export const MapView: React.FC = () => {
@@ -15,42 +15,87 @@ export const MapView: React.FC = () => {
   const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
   useEffect(() => {
-    if (!API_KEY) {
-      setMapError('Google Maps API key not found. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file');
-      setIsLoading(false);
-      return;
-    }
+    // Add a small delay to ensure the component is fully mounted
+    const initTimeout = setTimeout(() => {
+      console.log('MapView: Starting map initialization');
+      console.log('API Key present:', !!API_KEY);
+      console.log('MapRef current:', !!mapRef.current);
+      
+      if (!API_KEY) {
+        console.error('MapView: No API key found');
+        setMapError('Google Maps API key not found. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file');
+        setIsLoading(false);
+        return;
+      }
 
-    const loader = new Loader({
-      apiKey: API_KEY,
-      version: 'weekly',
-      libraries: ['places'],
-    });
+      if (!mapRef.current) {
+        console.error('MapView: Map container not ready');
+        setMapError('Map container not ready. Please try refreshing the page.');
+        setIsLoading(false);
+        return;
+      }
 
-    loader
-      .load()
-      .then(() => {
-        if (mapRef.current) {
-          const mapInstance = new google.maps.Map(mapRef.current, {
-            center: { lat: 40.7128, lng: -74.006 },
-            zoom: 13,
-            styles: [
-              {
-                featureType: 'all',
-                elementType: 'geometry',
-                stylers: [{ saturation: 100 }],
-              },
-            ],
-          });
-          setMap(mapInstance);
+      // Set a timeout to prevent infinite loading
+      const loadingTimeout = setTimeout(() => {
+        console.error('MapView: Loading timeout reached');
+        if (isLoading) {
+          setMapError('Map loading timed out. Please check your internet connection and API key permissions.');
           setIsLoading(false);
         }
-      })
-      .catch((error) => {
-        console.error('Error loading Google Maps:', error);
-        setMapError('Failed to load Google Maps. Please check your API key and ensure the Maps JavaScript API is enabled.');
-        setIsLoading(false);
+      }, 10000); // 10 second timeout
+
+      console.log('MapView: Creating Google Maps loader');
+      const loader = new GoogleMapsLoader({
+        apiKey: API_KEY,
+        version: 'weekly',
+        libraries: ['places'],
       });
+
+      console.log('MapView: Starting loader.load()');
+      loader
+        .load()
+        .then(() => {
+          console.log('MapView: Google Maps API loaded successfully');
+          clearTimeout(loadingTimeout);
+          
+          if (mapRef.current) {
+            console.log('MapView: Creating map instance');
+            const mapInstance = new google.maps.Map(mapRef.current, {
+              center: { lat: 40.7128, lng: -74.006 },
+              zoom: 13,
+              styles: [
+                {
+                  featureType: 'all',
+                  elementType: 'geometry',
+                  stylers: [{ saturation: 100 }],
+                },
+              ],
+            });
+            setMap(mapInstance);
+            setIsLoading(false);
+            console.log('MapView: Map created successfully');
+          } else {
+            console.error('MapView: Map container ref became null after API load');
+            setMapError('Map container lost during initialization');
+            setIsLoading(false);
+          }
+        })
+        .catch((error) => {
+          console.error('MapView: Error loading Google Maps:', error);
+          clearTimeout(loadingTimeout);
+          setMapError(`Failed to load Google Maps: ${error.message || 'Unknown error'}. Please check your API key and ensure the Maps JavaScript API is enabled.`);
+          setIsLoading(false);
+        });
+
+      // Cleanup timeout on unmount
+      return () => {
+        clearTimeout(loadingTimeout);
+      };
+    }, 100); // Small delay to ensure DOM is ready
+
+    return () => {
+      clearTimeout(initTimeout);
+    };
   }, [API_KEY]);
 
   const handleGetLocation = () => {
@@ -205,15 +250,18 @@ export const MapView: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : isLoading ? (
-          <div className="w-full h-[500px] neo-border border-t-0 bg-white flex items-center justify-center">
-            <div className="text-center">
-              <Loader className="w-12 h-12 animate-spin mx-auto mb-4" strokeWidth={3} />
-              <p className="font-mono font-bold uppercase">Loading Map...</p>
-            </div>
-          </div>
         ) : (
-          <div ref={mapRef} className="w-full h-[500px] neo-border border-t-0" />
+          <div className="relative w-full h-[500px] neo-border border-t-0">
+            {isLoading && (
+              <div className="absolute inset-0 bg-white flex items-center justify-center z-10">
+                <div className="text-center">
+                  <Loader className="w-12 h-12 animate-spin mx-auto mb-4" strokeWidth={3} />
+                  <p className="font-mono font-bold uppercase">Loading Map...</p>
+                </div>
+              </div>
+            )}
+            <div ref={mapRef} className="w-full h-full" />
+          </div>
         )}
 
         <div className="bg-[#00F0FF] p-4 neo-border border-b-0 border-l-0 border-r-0">

@@ -33,16 +33,7 @@ interface TravelStore {
 export const useStore = create<TravelStore>((set) => ({
   destination: '',
   setDestination: (dest) => set({ destination: dest }),
-  checklist: [
-    { id: '1', text: 'Check passport validity (6+ months)', completed: false, category: 'before' },
-    { id: '2', text: 'Apply for visa if required', completed: false, category: 'before' },
-    { id: '3', text: 'Book accommodation', completed: false, category: 'before' },
-    { id: '4', text: 'Purchase travel insurance', completed: false, category: 'before' },
-    { id: '5', text: 'Notify bank of travel plans', completed: false, category: 'before' },
-    { id: '6', text: 'Get local SIM card or data plan', completed: false, category: 'arrival' },
-    { id: '7', text: 'Exchange currency', completed: false, category: 'arrival' },
-    { id: '8', text: 'Download offline maps', completed: false, category: 'before' },
-  ],
+  checklist: [],
   addChecklistItem: (item) =>
     set((state) => ({
       checklist: [...state.checklist, { ...item, id: Date.now().toString() }],
