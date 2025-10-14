@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { useStore } from '../store/useStore';
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
@@ -16,6 +17,14 @@ export async function generateAIResponse(userMessage: string, destination?: stri
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+    // Get current checklist state
+    const currentChecklist = useStore.getState().checklist;
+    const checklistSummary = currentChecklist.length > 0 
+      ? `\n\nCurrent Checklist (${currentChecklist.length} items):\n${currentChecklist.map(item => 
+          `- [${item.completed ? 'x' : ' '}] ${item.text} (${item.category})`
+        ).join('\n')}`
+      : '\n\nCurrent Checklist: Empty';
+
     const systemPrompt = `You are an expert travel guide assistant helping tourists navigate their destination${destination ? ` (${destination})` : ''}. 
 
 Your role is to provide:
@@ -27,6 +36,16 @@ Your role is to provide:
 - Cultural tips and etiquette advice
 - Emergency information and safety tips
 
+CHECKLIST MANAGEMENT:
+You can create checklist items for the user. When suggesting checklist items, format them like this:
+[CHECKLIST:category:item_text]
+
+Categories: before, arrival, during, departure
+Example: [CHECKLIST:before:Check passport validity (6+ months)]
+
+You can suggest multiple checklist items in one response.
+${checklistSummary}
+
 Provide practical, actionable advice based on real travel experiences. Be concise but thorough. Use bullet points and clear formatting. Always prioritize traveler safety and authentic local experiences.
 
 User question: ${userMessage}`;
@@ -34,6 +53,9 @@ User question: ${userMessage}`;
     const result = await model.generateContent(systemPrompt);
     const response = await result.response;
     const text = response.text();
+    
+    // Parse and create checklist items from AI response
+    parseAndCreateChecklistItems(text);
     
     return text;
   } catch (error) {
@@ -52,5 +74,23 @@ User question: ${userMessage}`;
     }
     
     return "⚠️ Sorry, I encountered an error connecting to the AI service. Please try again in a moment.";
+  }
+}
+
+function parseAndCreateChecklistItems(text: string): void {
+  const checklistRegex = /\[CHECKLIST:(before|arrival|during|departure):([^\]]+)\]/g;
+  const matches = text.matchAll(checklistRegex);
+  
+  const { addChecklistItem } = useStore.getState();
+  
+  for (const match of matches) {
+    const category = match[1] as 'before' | 'arrival' | 'during' | 'departure';
+    const itemText = match[2].trim();
+    
+    addChecklistItem({
+      text: itemText,
+      completed: false,
+      category: category,
+    });
   }
 }

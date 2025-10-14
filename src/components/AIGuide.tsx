@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import { Send, Loader, Sparkles, AlertCircle } from 'lucide-react';
+import { Send, Loader, Sparkles, AlertCircle, ListChecks } from 'lucide-react';
 import { generateAIResponse } from '../services/gemini';
 
 export const AIGuide: React.FC = () => {
-  const { chatHistory, addMessage, destination } = useStore();
+  const { chatHistory, addMessage, destination, checklist } = useStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -23,7 +23,9 @@ export const AIGuide: React.FC = () => {
 
     try {
       const aiResponse = await generateAIResponse(userMessage, destination);
-      addMessage('assistant', aiResponse);
+      // Remove checklist tags from display
+      const displayResponse = aiResponse.replace(/\[CHECKLIST:[^\]]+\]/g, '').trim();
+      addMessage('assistant', displayResponse);
     } catch (error) {
       console.error('Error getting AI response:', error);
       addMessage('assistant', '⚠️ Sorry, I encountered an error. Please try again.');
@@ -33,11 +35,11 @@ export const AIGuide: React.FC = () => {
   };
 
   const quickPrompts = [
+    'Create a checklist for my trip',
     'What should I do before arriving?',
     'Best apps to download?',
     'How much should a taxi cost?',
     'Where are the best local markets?',
-    'Is this price reasonable?',
     'Emergency contacts and hospitals',
   ];
 
@@ -55,6 +57,12 @@ export const AIGuide: React.FC = () => {
               <h2 className="text-xl font-bold uppercase text-white">AI Tour Guide</h2>
               <p className="text-xs text-white uppercase">Powered by Google Gemini AI</p>
             </div>
+            {checklist.length > 0 && (
+              <div className="bg-[#00F0FF] neo-border px-3 py-1 flex items-center gap-2">
+                <ListChecks className="w-4 h-4" strokeWidth={3} />
+                <span className="text-xs font-bold">{checklist.length}</span>
+              </div>
+            )}
             {!hasApiKey && (
               <div className="bg-[#FFD700] neo-border p-2">
                 <AlertCircle className="w-5 h-5" strokeWidth={3} />
@@ -79,7 +87,8 @@ export const AIGuide: React.FC = () => {
                 I can help you with:
               </p>
               <ul className="font-mono text-sm space-y-2 list-none">
-                <li>✓ Pre-arrival checklists and visa requirements</li>
+                <li>✓ Create personalized travel checklists</li>
+                <li>✓ Pre-arrival requirements and visa info</li>
                 <li>✓ Local transportation and app recommendations</li>
                 <li>✓ Price verification to avoid scams</li>
                 <li>✓ Navigation assistance with GPS integration</li>
@@ -141,7 +150,7 @@ export const AIGuide: React.FC = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask me anything about your destination..."
+              placeholder="Ask me anything or request a checklist..."
               className="flex-1 px-4 py-3 neo-border bg-white text-black font-mono focus:outline-none"
               disabled={isLoading}
             />

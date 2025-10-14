@@ -1,0 +1,29 @@
+* [33mcommit 05cc7599a818cbcff91ec62c9b29f3382694eecc[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+[31m|[m Author: NguyenLinhNhien <nguyenlinhnhien14025@gmail.com>
+[31m|[m Date:   Tue Oct 14 17:28:47 2025 +0800
+[31m|[m 
+[31m|[m     Delete private info
+[31m|[m 
+* [33mcommit 5603e6e7675aad744ae00df2f77da8d0931a8e43[m
+[31m|[m Author: NguyenLinhNhien <nguyenlinhnhien14025@gmail.com>
+[31m|[m Date:   Mon Oct 13 23:12:47 2025 +0800
+[31m|[m 
+[31m|[m     Fixed Google Map and Gemini
+[31m|[m 
+* [33mcommit ac8ff88169578b3ef631b6f6f5712df46d60088a[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+[31m|[m Author: Nhien L. Nguyen <133476210+Lynean@users.noreply.github.com>
+[31m|[m Date:   Mon Oct 13 20:42:09 2025 +0700
+[31m|[m 
+[31m|[m     Gemini and Google Maps APIs
+[31m|[m 
+* [33mcommit 84b97b14e9eecfbb1ca8506668d6726ec299f9dc[m
+[31m|[m Author: Nhien L. Nguyen <133476210+Lynean@users.noreply.github.com>
+[31m|[m Date:   Mon Oct 13 19:01:26 2025 +0700
+[31m|[m 
+[31m|[m     Initial commit
+[31m|[m 
+* [33mcommit 4f93df2de252c95fc5313ff9d494b9cbf00f2ec8[m
+  Author: Nhien L. Nguyen <133476210+Lynean@users.noreply.github.com>
+  Date:   Mon Oct 13 19:01:21 2025 +0700
+  
+      Initial commit
