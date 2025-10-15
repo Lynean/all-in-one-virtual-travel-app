@@ -1,167 +1,179 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useStore } from '../store/useStore';
-import { Send, Loader, Sparkles, AlertCircle, ListChecks } from 'lucide-react';
+import { Send, Bot, User, Loader } from 'lucide-react';
 import { generateAIResponse } from '../services/gemini';
+import { useStore } from '../store/useStore';
+
+interface Message {
+  id: string;
+  text: string;
+  sender: 'user' | 'ai';
+  timestamp: Date;
+}
 
 export const AIGuide: React.FC = () => {
-  const { chatHistory, addMessage, destination, checklist } = useStore();
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: '1',
+      text: 'Hello! I\'m your AI emergency preparedness assistant. I can help you create checklists, provide safety advice, and answer questions about disaster preparedness. How can I help you today?',
+      sender: 'ai',
+      timestamp: new Date(),
+    },
+  ]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { destination, checklist } = useStore();
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
+    scrollToBottom();
+  }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const sendMessage = async () => {
+    if (input.trim() && !loading) {
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        text: input,
+        sender: 'user',
+        timestamp: new Date(),
+      };
+      
+      setMessages(prev => [...prev, userMessage]);
+      setInput('');
+      setLoading(true);
 
-    const userMessage = input;
-    setInput('');
-    addMessage('user', userMessage);
-    setIsLoading(true);
-
-    try {
-      const aiResponse = await generateAIResponse(userMessage, destination);
-      // Remove checklist tags from display
-      const displayResponse = aiResponse.replace(/\[CHECKLIST:[^\]]+\]/g, '').trim();
-      addMessage('assistant', displayResponse);
-    } catch (error) {
-      console.error('Error getting AI response:', error);
-      addMessage('assistant', '⚠️ Sorry, I encountered an error. Please try again.');
-    } finally {
-      setIsLoading(false);
+      try {
+        const aiResponseText = await generateAIResponse(input, destination);
+        
+        const cleanedResponse = aiResponseText.replace(/\[CHECKLIST:[^\]]+\]/g, '').trim();
+        
+        const aiMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: cleanedResponse,
+          sender: 'ai',
+          timestamp: new Date(),
+        };
+        
+        setMessages(prev => [...prev, aiMessage]);
+      } catch (error) {
+        console.error('AI response error:', error);
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: '⚠️ Sorry, I encountered an error. Please try again.',
+          sender: 'ai',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
-  const quickPrompts = [
-    'Create a checklist for my trip',
-    'What should I do before arriving?',
-    'Best apps to download?',
-    'How much should a taxi cost?',
-    'Where are the best local markets?',
-    'Emergency contacts and hospitals',
-  ];
-
-  const hasApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const handleSuggestionClick = (suggestion: string) => {
+    setInput(suggestion);
+  };
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-4xl">
-      <div className="bg-white neo-border neo-shadow-lg flex flex-col h-[calc(100vh-250px)]">
-        <div className="bg-[#FF005C] p-4 neo-border border-t-0 border-l-0 border-r-0">
-          <div className="flex items-center gap-3">
-            <div className="bg-[#00F0FF] neo-border p-2">
-              <Sparkles className="w-6 h-6" strokeWidth={3} />
+    <div className="space-y-6">
+      <div className="bg-neuro-ai-card rounded-3xl p-6 shadow-neuro-ai">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-neuro-ai-text">AI Emergency Guide</h2>
+          {checklist.length > 0 && (
+            <div className="text-sm text-neuro-ai-textLight bg-neuro-ai-bg rounded-xl shadow-neuro-ai-sm px-3 py-1">
+              {checklist.length} checklist items
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold uppercase text-white">AI Tour Guide</h2>
-              <p className="text-xs text-white uppercase">Powered by Google Gemini AI</p>
-            </div>
-            {checklist.length > 0 && (
-              <div className="bg-[#00F0FF] neo-border px-3 py-1 flex items-center gap-2">
-                <ListChecks className="w-4 h-4" strokeWidth={3} />
-                <span className="text-xs font-bold">{checklist.length}</span>
-              </div>
-            )}
-            {!hasApiKey && (
-              <div className="bg-[#FFD700] neo-border p-2">
-                <AlertCircle className="w-5 h-5" strokeWidth={3} />
-              </div>
-            )}
-          </div>
+          )}
         </div>
-
-        {!hasApiKey && (
-          <div className="bg-[#FFD700] neo-border border-t-0 border-l-0 border-r-0 p-4">
-            <p className="font-mono text-sm font-bold">
-              ⚠️ API KEY REQUIRED: Add your Gemini API key to .env file to enable AI features
-            </p>
-          </div>
-        )}
-
-        {chatHistory.length === 0 && (
-          <div className="p-6 flex-1 overflow-y-auto">
-            <div className="bg-[#00F0FF] neo-border p-6 mb-6">
-              <h3 className="font-bold uppercase mb-3 text-lg">👋 Welcome to Your AI Travel Assistant!</h3>
-              <p className="font-mono text-sm mb-4">
-                I can help you with:
-              </p>
-              <ul className="font-mono text-sm space-y-2 list-none">
-                <li>✓ Create personalized travel checklists</li>
-                <li>✓ Pre-arrival requirements and visa info</li>
-                <li>✓ Local transportation and app recommendations</li>
-                <li>✓ Price verification to avoid scams</li>
-                <li>✓ Navigation assistance with GPS integration</li>
-                <li>✓ Local marketplace reviews and alternatives</li>
-                <li>✓ Cultural tips and etiquette</li>
-              </ul>
-            </div>
-
-            <div className="mb-4">
-              <h4 className="font-bold uppercase mb-3">Quick Questions:</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {quickPrompts.map((prompt, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setInput(prompt)}
-                    className="bg-white neo-border p-3 text-left font-mono text-sm hover:bg-[#FFD700] hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow-sm transition-all"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {chatHistory.length > 0 && (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {chatHistory.map((msg, idx) => (
+        
+        <div className="rounded-2xl shadow-neuro-inset p-4 mb-6 bg-neuro-ai-bg" style={{ height: '400px', overflowY: 'auto' }}>
+          <div className="space-y-4">
+            {messages.map(message => (
               <div
-                key={idx}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                key={message.id}
+                className={`flex gap-3 ${message.sender === 'user' ? 'flex-row-reverse' : ''}`}
               >
-                <div
-                  className={`max-w-[80%] p-4 neo-border neo-shadow-sm ${
-                    msg.role === 'user'
-                      ? 'bg-[#00F0FF]'
-                      : 'bg-white'
-                  }`}
-                >
-                  <p className="font-mono text-sm whitespace-pre-wrap">{msg.content}</p>
+                <div className={`rounded-xl shadow-neuro-ai-sm p-3 flex-shrink-0 ${
+                  message.sender === 'ai' ? 'bg-gradient-to-br from-neuro-accent to-neuro-accentLight' : 'bg-neuro-ai-card'
+                }`}>
+                  {message.sender === 'ai' ? (
+                    <Bot className="w-5 h-5 text-white" strokeWidth={2.5} />
+                  ) : (
+                    <User className="w-5 h-5 text-neuro-ai-text" strokeWidth={2.5} />
+                  )}
+                </div>
+                <div className={`flex-1 ${message.sender === 'user' ? 'text-right' : ''}`}>
+                  <div className={`inline-block rounded-2xl shadow-neuro-ai-sm p-4 max-w-[80%] ${
+                    message.sender === 'user' ? 'bg-gradient-to-br from-neuro-accent to-neuro-accentLight' : 'bg-neuro-ai-card'
+                  }`}>
+                    <p className={`text-sm whitespace-pre-wrap ${
+                      message.sender === 'user' ? 'text-white' : 'text-neuro-ai-text'
+                    }`}>
+                      {message.text}
+                    </p>
+                  </div>
+                  <p className="text-xs text-neuro-ai-textLight mt-1">
+                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
                 </div>
               </div>
             ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-white neo-border neo-shadow-sm p-4">
-                  <Loader className="w-5 h-5 animate-spin" strokeWidth={3} />
+            {loading && (
+              <div className="flex gap-3">
+                <div className="rounded-xl shadow-neuro-ai-sm p-3 flex-shrink-0 bg-gradient-to-br from-neuro-accent to-neuro-accentLight">
+                  <Loader className="w-5 h-5 text-white animate-spin" strokeWidth={2.5} />
+                </div>
+                <div className="flex-1">
+                  <div className="inline-block rounded-2xl shadow-neuro-ai-sm p-4 bg-neuro-ai-card">
+                    <p className="text-sm text-neuro-ai-textLight">Thinking...</p>
+                  </div>
                 </div>
               </div>
             )}
-            <div ref={chatEndRef} />
+            <div ref={messagesEndRef} />
           </div>
-        )}
+        </div>
 
-        <div className="p-4 neo-border border-b-0 border-l-0 border-r-0 bg-white">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask me anything or request a checklist..."
-              className="flex-1 px-4 py-3 neo-border bg-white text-black font-mono focus:outline-none"
-              disabled={isLoading}
-            />
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && !loading && sendMessage()}
+            placeholder="Ask about emergency preparedness..."
+            disabled={loading}
+            className="flex-1 px-4 py-3 rounded-2xl shadow-neuro-inset bg-neuro-ai-bg text-neuro-ai-text placeholder-neuro-ai-textLight focus:outline-none disabled:opacity-50"
+            aria-label="Message input"
+          />
+          <button
+            onClick={sendMessage}
+            disabled={loading || !input.trim()}
+            className="px-6 py-3 rounded-2xl shadow-neuro-ai-sm hover:shadow-neuro-hover active:shadow-neuro-active bg-gradient-to-br from-neuro-accent to-neuro-accentLight transition-all disabled:opacity-50"
+            aria-label="Send message"
+          >
+            <Send className="w-5 h-5 text-white" strokeWidth={2.5} />
+          </button>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          {[
+            'Create emergency checklist',
+            'What should I prepare?',
+            'Emergency contact info',
+            'Disaster evacuation tips'
+          ].map(suggestion => (
             <button
-              onClick={handleSend}
-              disabled={isLoading || !input.trim()}
-              className="bg-[#FF005C] neo-border px-6 py-3 font-bold uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none neo-shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed text-white"
+              key={suggestion}
+              onClick={() => handleSuggestionClick(suggestion)}
+              disabled={loading}
+              className="rounded-2xl shadow-neuro-ai-sm hover:shadow-neuro-hover active:shadow-neuro-active p-3 text-sm text-neuro-ai-text font-medium transition-all disabled:opacity-50"
             >
-              <Send className="w-5 h-5" strokeWidth={3} />
+              {suggestion}
             </button>
-          </div>
+          ))}
         </div>
       </div>
     </div>

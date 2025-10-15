@@ -36,14 +36,24 @@ export const useStore = create<TravelStore>((set) => ({
   checklist: [],
   addChecklistItem: (item) =>
     set((state) => ({
-      checklist: [...state.checklist, { ...item, id: Date.now().toString() }],
+      checklist: [...state.checklist, { ...item, id: `${Date.now()}-${Math.random()}` }],
     })),
   toggleChecklistItem: (id) =>
-    set((state) => ({
-      checklist: state.checklist.map((item) =>
-        item.id === id ? { ...item, completed: !item.completed } : item
-      ),
-    })),
+    set((state) => {
+      console.log('Toggling item with id:', id);
+      console.log('Current checklist:', state.checklist);
+      
+      const updatedChecklist = state.checklist.map((item) => {
+        if (item.id === id) {
+          console.log('Found matching item:', item);
+          return { ...item, completed: !item.completed };
+        }
+        return item;
+      });
+      
+      console.log('Updated checklist:', updatedChecklist);
+      return { checklist: updatedChecklist };
+    }),
   removeChecklistItem: (id) =>
     set((state) => ({
       checklist: state.checklist.filter((item) => item.id !== id),

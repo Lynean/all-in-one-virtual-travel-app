@@ -3,33 +3,101 @@
 @tailwind utilities;
 
 * {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background: #FFFFFF;
+  background: #e0e5ec;
+  color: #4a5568;
 }
 
 @layer utilities {
-  .neo-shadow {
-    box-shadow: 6px 6px 0 #000000;
+  .neuro-element {
+    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
+    box-shadow: 8px 8px 16px #a3b1c6, -8px -8px 16px #ffffff;
+    border-radius: 20px;
+    transition: all 0.3s ease;
   }
   
-  .neo-shadow-sm {
-    box-shadow: 4px 4px 0 #000000;
+  .neuro-element-sm {
+    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
+    box-shadow: 4px 4px 8px #a3b1c6, -4px -4px 8px #ffffff;
+    border-radius: 15px;
+    transition: all 0.3s ease;
   }
   
-  .neo-shadow-lg {
-    box-shadow: 8px 8px 0 #000000;
+  .neuro-element-lg {
+    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
+    box-shadow: 12px 12px 24px #a3b1c6, -12px -12px 24px #ffffff;
+    border-radius: 25px;
+    transition: all 0.3s ease;
   }
   
-  .neo-border {
-    border: 3px solid #000000;
+  .neuro-inset {
+    background: linear-gradient(145deg, #d9dfe8, #e6ebf2);
+    box-shadow: inset 8px 8px 16px #a3b1c6, inset -8px -8px 16px #ffffff;
+    border-radius: 20px;
   }
   
-  .neo-border-thick {
-    border: 4px solid #000000;
+  .neuro-button {
+    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
+    box-shadow: 8px 8px 16px #a3b1c6, -8px -8px 16px #ffffff;
+    border-radius: 15px;
+    transition: all 0.2s ease;
+  }
+  
+  .neuro-button:hover {
+    box-shadow: 6px 6px 12px #a3b1c6, -6px -6px 12px #ffffff;
+    transform: translateY(-2px);
+  }
+  
+  .neuro-button:active {
+    box-shadow: inset 4px 4px 8px #a3b1c6, inset -4px -4px 8px #ffffff;
+    transform: translateY(0);
+  }
+  
+  .neuro-input {
+    background: linear-gradient(145deg, #d9dfe8, #e6ebf2);
+    box-shadow: inset 6px 6px 12px #a3b1c6, inset -6px -6px 12px #ffffff;
+    border-radius: 15px;
+    border: none;
+    outline: none;
+    transition: all 0.3s ease;
+  }
+  
+  .neuro-input:focus {
+    box-shadow: inset 8px 8px 16px #a3b1c6, inset -8px -8px 16px #ffffff;
+  }
+  
+  .neuro-card {
+    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
+    box-shadow: 10px 10px 20px #a3b1c6, -10px -10px 20px #ffffff;
+    border-radius: 20px;
+    transition: all 0.3s ease;
+  }
+  
+  .neuro-card:hover {
+    box-shadow: 12px 12px 24px #a3b1c6, -12px -12px 24px #ffffff;
+    transform: translateY(-3px);
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .neuro-element,
+  .neuro-button,
+  .neuro-card {
+    border: 2px solid #4a5568;
   }
 }

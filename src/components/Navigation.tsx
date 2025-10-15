@@ -15,27 +15,42 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
   ];
 
   return (
-    <nav className="bg-white neo-border-thick border-t-0 border-b-0">
+    <nav className="bg-neuro-bg sticky top-28 z-40 mb-8">
       <div className="container mx-auto px-4">
-        <div className="grid grid-cols-4 gap-0">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-4 neo-border border-t-0 border-b-0 border-l-0 last:border-r-0 transition-colors ${
-                  isActive
-                    ? 'bg-[#00F0FF] text-black'
-                    : 'bg-white text-black hover:bg-gray-100'
-                }`}
-              >
-                <Icon className="w-6 h-6 mx-auto mb-1" strokeWidth={3} />
-                <span className="text-xs font-bold uppercase block">{tab.label}</span>
-              </button>
-            );
-          })}
+        <div className="neuro-element p-2">
+          <div className="grid grid-cols-4 gap-2">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`py-4 px-2 rounded-2xl transition-all duration-300 ${
+                    isActive
+                      ? 'neuro-inset bg-gradient-to-br from-neuro-accent to-neuro-accentLight'
+                      : 'neuro-button hover:scale-105'
+                  }`}
+                  aria-label={tab.label}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  <Icon 
+                    className={`w-6 h-6 mx-auto mb-2 ${
+                      isActive ? 'text-white' : 'text-neuro-text'
+                    }`} 
+                    strokeWidth={2.5} 
+                  />
+                  <span 
+                    className={`text-xs font-semibold block ${
+                      isActive ? 'text-white' : 'text-neuro-text'
+                    }`}
+                  >
+                    {tab.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </nav>

@@ -1,124 +1,80 @@
-import React, { useState } from 'react';
-import { emergencyContacts } from '../data/emergencyContacts';
-import { Phone, Search, AlertTriangle } from 'lucide-react';
+import React from 'react';
+import { Phone, AlertTriangle, Cross, Shield } from 'lucide-react';
 
 export const Emergency: React.FC = () => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const emergencyContacts = [
+    { id: 1, name: 'Emergency Services', number: '112', icon: AlertTriangle, color: 'from-red-400 to-red-600' },
+    { id: 2, name: 'Police', number: '110', icon: Shield, color: 'from-blue-400 to-blue-600' },
+    { id: 3, name: 'Medical Emergency', number: '911', icon: Cross, color: 'from-green-400 to-green-600' },
+    { id: 4, name: 'Embassy', number: '+1-555-0123', icon: Phone, color: 'from-purple-400 to-purple-600' },
+  ];
 
-  const filteredContacts = emergencyContacts.filter((contact) =>
-    contact.country.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const safetyTips = [
+    'Keep copies of important documents',
+    'Share your location with trusted contacts',
+    'Know the local emergency numbers',
+    'Keep emergency cash in a safe place',
+    'Register with your embassy',
+  ];
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-4xl">
-      <div className="bg-[#FF005C] neo-border neo-shadow-lg p-6 mb-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="bg-white neo-border p-3">
-            <AlertTriangle className="w-8 h-8" strokeWidth={3} />
+    <div className="space-y-6">
+      <div className="bg-neuro-emergency-card rounded-3xl p-6 shadow-neuro-emergency border-2 border-neuro-emergency">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="rounded-xl shadow-neuro-emergency-sm p-3 bg-gradient-to-br from-red-400 to-red-600">
+            <AlertTriangle className="w-6 h-6 text-white" strokeWidth={2.5} />
           </div>
-          <div>
-            <h2 className="text-2xl font-bold uppercase text-white">Emergency Contacts</h2>
-            <p className="text-sm text-white uppercase">Quick access to help</p>
-          </div>
+          <h2 className="text-2xl font-bold text-neuro-emergency-text">Emergency Contacts</h2>
         </div>
 
-        <div className="bg-white neo-border p-4">
-          <p className="font-mono text-sm font-bold">
-            ⚠️ IN CASE OF EMERGENCY: Always call local emergency services first. Keep this information accessible offline.
-          </p>
+        <div className="grid gap-4 mb-6">
+          {emergencyContacts.map(contact => {
+            const Icon = contact.icon;
+            return (
+              <a
+                key={contact.id}
+                href={`tel:${contact.number}`}
+                className="bg-neuro-emergency-card rounded-3xl shadow-neuro-emergency p-5 flex items-center gap-4 hover:shadow-neuro-hover active:shadow-neuro-active transition-all"
+                aria-label={`Call ${contact.name}`}
+              >
+                <div className={`rounded-xl shadow-neuro-emergency-sm p-4 bg-gradient-to-br ${contact.color}`}>
+                  <Icon className="w-6 h-6 text-white" strokeWidth={2.5} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-neuro-emergency-text">{contact.name}</h3>
+                  <p className="text-2xl font-bold text-neuro-accent mt-1">{contact.number}</p>
+                </div>
+                <Phone className="w-5 h-5 text-neuro-emergency-textLight" strokeWidth={2.5} />
+              </a>
+            );
+          })}
         </div>
       </div>
 
-      <div className="bg-white neo-border neo-shadow-lg p-6 mb-6">
-        <div className="flex gap-2 mb-6">
-          <Search className="w-6 h-6 mt-3" strokeWidth={3} />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search country..."
-            className="flex-1 px-4 py-3 neo-border bg-white text-black font-mono focus:outline-none"
-          />
-        </div>
-
-        <div className="space-y-4">
-          {filteredContacts.map((contact) => (
-            <div key={contact.country} className="neo-border bg-white">
-              <div className="bg-[#00F0FF] neo-border border-t-0 border-l-0 border-r-0 p-4">
-                <h3 className="text-xl font-bold uppercase">{contact.country}</h3>
+      <div className="bg-neuro-emergency-card rounded-3xl p-6 shadow-neuro-emergency">
+        <h3 className="text-xl font-bold text-neuro-emergency-text mb-4">Safety Tips</h3>
+        <div className="space-y-3">
+          {safetyTips.map((tip, index) => (
+            <div key={index} className="bg-neuro-emergency-bg rounded-2xl shadow-neuro-emergency-sm p-4 flex items-start gap-3">
+              <div className="rounded-xl shadow-neuro-emergency-sm w-8 h-8 flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-neuro-accent to-neuro-accentLight">
+                <span className="text-white font-bold text-sm">{index + 1}</span>
               </div>
-              <div className="p-4 space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="bg-[#FF005C] neo-border p-2 w-12 h-12 flex items-center justify-center">
-                    <Phone className="w-6 h-6 text-white" strokeWidth={3} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-bold uppercase text-sm">Police</p>
-                    <a
-                      href={`tel:${contact.police}`}
-                      className="text-2xl font-bold font-mono hover:text-[#FF005C]"
-                    >
-                      {contact.police}
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="bg-[#FF005C] neo-border p-2 w-12 h-12 flex items-center justify-center">
-                    <Phone className="w-6 h-6 text-white" strokeWidth={3} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-bold uppercase text-sm">Ambulance</p>
-                    <a
-                      href={`tel:${contact.ambulance}`}
-                      className="text-2xl font-bold font-mono hover:text-[#FF005C]"
-                    >
-                      {contact.ambulance}
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="bg-[#FF005C] neo-border p-2 w-12 h-12 flex items-center justify-center">
-                    <Phone className="w-6 h-6 text-white" strokeWidth={3} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-bold uppercase text-sm">Fire</p>
-                    <a
-                      href={`tel:${contact.fire}`}
-                      className="text-2xl font-bold font-mono hover:text-[#FF005C]"
-                    >
-                      {contact.fire}
-                    </a>
-                  </div>
-                </div>
-
-                {contact.touristHotline && (
-                  <div className="flex items-center gap-3">
-                    <div className="bg-[#00F0FF] neo-border p-2 w-12 h-12 flex items-center justify-center">
-                      <Phone className="w-6 h-6" strokeWidth={3} />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-bold uppercase text-sm">Tourist Hotline</p>
-                      <a
-                        href={`tel:${contact.touristHotline}`}
-                        className="text-2xl font-bold font-mono hover:text-[#00F0FF]"
-                      >
-                        {contact.touristHotline}
-                      </a>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <p className="text-neuro-emergency-text flex-1">{tip}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="bg-[#FFD700] neo-border neo-shadow p-4">
-        <p className="font-mono text-sm font-bold">
-          💡 TIP: Save these numbers in your phone contacts before traveling. Consider taking a screenshot for offline access.
-        </p>
+      <div className="bg-neuro-emergency-card rounded-3xl p-6 shadow-neuro-emergency bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-1" strokeWidth={2.5} />
+          <div>
+            <h4 className="font-bold text-amber-900 mb-2">Important Notice</h4>
+            <p className="text-sm text-amber-800">
+              In case of emergency, always call local emergency services first. These numbers are for reference and may vary by location.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
