@@ -1,0 +1,13 @@
+{
+  "userProfile": null,
+  "settings": {
+    "environmentVariables": {
+      "VITE_GEMINI_API_KEY": "",
+      "VITE_GOOGLE_MAPS_API_KEY": ""
+    },
+    "projectName": "Webs - Emergency Preparedness",
+    "description": "Emergency and disaster preparedness web application with AI-powered assistance",
+    "version": "1.0.0"
+  },
+  "exportDate": "2025-01-15T04:33:40.633Z"
+}
