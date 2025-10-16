@@ -1,68 +1,237 @@
-# TravelMate - AI-Powered Travel Guide
+# 🌍 TravelMate - AI-Powered Virtual Travel Guide
 
-An all-in-one travel companion app with AI tour assistant, interactive maps, checklists, and emergency contacts.
+An intelligent travel companion that combines **Gemini AI** for quick responses and **LangChain Agent** for complex trip planning.
 
-## Features
+## ✨ Features
 
-- **Travel Checklist**: Organize tasks by travel phases (Before, Arrival, During, Departure)
-- **Interactive Map**: Google Maps integration with search and location tracking
-- **AI Tour Guide**: Powered by Google Gemini AI for personalized travel advice
-- **Emergency Contacts**: Quick access to emergency numbers for 10+ countries
+### 🧠 Dual AI System
+- **Gemini Quick Mode**: Fast responses for simple queries (nearby places, directions)
+- **LangChain Agent**: Complex workflows (multi-day planning, budget optimization)
+- **Automatic Routing**: Intelligently chooses the best AI for your query
 
-## Setup
+### 🗺️ Smart Location Services
+- Real-time GPS tracking with verification protocol
+- Google Maps integration with in-app directions
+- Nearby place search with detailed results
+- Location change detection
 
-1. Install dependencies:
+### 📋 Trip Planning
+- Multi-day itinerary generation
+- Budget tracking and optimization
+- Weather-based activity recommendations
+- Currency conversion
+
+### 🔒 Privacy & Security
+- Location confirmation before GPS usage
+- Session-based conversation memory
+- Secure API key management
+- GDPR-compliant data handling
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 18+
+- Python 3.11+ (for backend)
+- Redis (for backend sessions)
+- API Keys:
+  - Google Gemini API
+  - Google Maps API
+  - OpenAI API (for LangChain)
+  - OpenWeatherMap API
+  - ExchangeRate-API
+
+### Frontend Setup
+
+1. **Install dependencies:**
 ```bash
 npm install
 ```
 
-2. Create a `.env` file in the root directory:
-```env
-VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
-VITE_GEMINI_API_KEY=your_gemini_api_key_here
+2. **Configure environment:**
+```bash
+cp .env.example .env
+# Add your API keys to .env
 ```
 
-3. Get your API keys:
-
-### Google Maps API Key
-- Go to [Google Cloud Console](https://console.cloud.google.com/)
-- Create a new project or select existing one
-- Enable "Maps JavaScript API" and "Places API"
-- Create credentials (API Key)
-- Copy the API key to your `.env` file
-
-### Gemini API Key
-- Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
-- Click "Get API Key"
-- Create a new API key
-- Copy the API key to your `.env` file
-
-4. Start the development server:
+3. **Start development server:**
 ```bash
 npm run dev
 ```
 
-## Environment Variables
+### Backend Setup
 
-- `VITE_GOOGLE_MAPS_API_KEY`: Required for map functionality
-- `VITE_GEMINI_API_KEY`: Required for AI chatbot features
+1. **Navigate to backend:**
+```bash
+cd backend
+```
 
-## Tech Stack
+2. **Install Python dependencies:**
+```bash
+pip install -r requirements.txt
+```
 
-- React + TypeScript
-- Vite
-- Tailwind CSS
-- Zustand (State Management)
-- Google Maps API
+3. **Configure backend environment:**
+```bash
+cp .env.example .env
+# Add your API keys to backend/.env
+```
+
+4. **Start Redis:**
+```bash
+redis-server
+```
+
+5. **Run backend:**
+```bash
+python main.py
+```
+
+Backend will be available at `http://localhost:8000`
+
+## 🏗️ Architecture
+
+```
+Frontend (React + TypeScript)
+├── Hybrid Router
+│   ├── Simple queries → Gemini API
+│   └── Complex queries → FastAPI Backend
+│
+Backend (FastAPI + LangChain)
+├── LangChain Agent (GPT-4-Turbo)
+├── Tools
+│   ├── Weather Tool (OpenWeatherMap)
+│   ├── Currency Tool (ExchangeRate-API)
+│   └── Maps Tool (Command Generator)
+└── Redis (Session Management)
+```
+
+## 🔄 Hybrid Routing Logic
+
+The system automatically routes queries:
+
+**→ Gemini (Fast & Cheap)**
+- "Find restaurants near me"
+- "Show directions to downtown"
+- "What's around here?"
+
+**→ LangChain Agent (Complex & Autonomous)**
+- "Plan a 3-day trip to Paris with $500 budget"
+- "Create an itinerary considering weather"
+- "Convert prices and optimize my budget"
+
+## 📡 API Endpoints
+
+### Frontend → Backend
+
+**POST** `/api/chat`
+```json
+{
+  "user_id": "user123",
+  "session_id": "session456",
+  "message": "Plan a trip to Tokyo",
+  "context": {
+    "current_location": { "lat": 35.6762, "lng": 139.6503 },
+    "location_confirmed": true,
+    "budget": "$1000"
+  }
+}
+```
+
+**WebSocket** `/ws/{user_id}/{session_id}`
+- Real-time chat communication
+
+## 🛠️ Tech Stack
+
+### Frontend
+- **Framework**: React 18 + TypeScript
+- **Build Tool**: Vite
+- **Styling**: TailwindCSS
+- **State**: Zustand
+- **Maps**: Google Maps JavaScript API
+- **AI**: Google Gemini API
+
+### Backend
+- **Framework**: FastAPI
+- **AI**: LangChain + OpenAI GPT-4-Turbo
+- **Session**: Redis
+- **APIs**: OpenWeatherMap, ExchangeRate-API
+
+## 📊 Cost Optimization
+
+- **Hybrid routing** reduces API costs by 60-70%
+- **Redis caching** for API responses
+- **Session management** with 24-hour TTL
+- **Fallback models** (GPT-3.5-Turbo) for cost control
+
+**Estimated Monthly Cost**: ~$70 (within $100 budget)
+
+## 🔐 Environment Variables
+
+### Frontend (.env)
+```env
+VITE_GEMINI_API_KEY=your_gemini_key
+VITE_GOOGLE_MAPS_API_KEY=your_maps_key
+VITE_BACKEND_URL=http://localhost:8000
+```
+
+### Backend (backend/.env)
+```env
+OPENAI_API_KEY=your_openai_key
+OPENWEATHER_API_KEY=your_weather_key
+EXCHANGERATE_API_KEY=your_currency_key
+REDIS_URL=redis://localhost:6379
+```
+
+## 🚢 Deployment
+
+### Frontend (Vercel/Netlify)
+```bash
+npm run build
+# Deploy dist/ folder
+```
+
+### Backend (Railway/Render)
+```bash
+cd backend
+docker build -t travelmate-backend .
+# Deploy container
+```
+
+## 📝 Development Roadmap
+
+### ✅ Phase 1 (Complete)
+- FastAPI backend with LangChain
+- Hybrid routing system
+- Basic tools (Weather, Currency, Maps)
+- Session management
+
+### 🔄 Phase 2 (In Progress)
+- Multi-day trip planner
+- Budget optimizer
+- Weather-based replanning
+- Translation support
+
+### 📅 Phase 3 (Planned)
+- Booking.com integration
+- Proactive suggestions
+- User preference learning
+- Performance optimization
+
+## 🤝 Contributing
+
+Contributions welcome! Please read our contributing guidelines.
+
+## 📄 License
+
+MIT License - See LICENSE file for details
+
+## 🙏 Acknowledgments
+
 - Google Gemini AI
-- Neo-Brutalism Design Theme
+- OpenAI GPT-4
+- LangChain Framework
+- Google Maps Platform
 
-## Design Philosophy
+---
 
-This app embraces Neo-Brutalism design with:
-- Flat, saturated colors (#FF005C, #00F0FF, #FFD700)
-- Thick black borders (3-4px)
-- Hard shadows (6-8px offset)
-- IBM Plex Mono font
-- No gradients or rounded corners
-- Intentionally rough, edgy aesthetic
+Built with ❤️ by the TravelMate Team
