@@ -29,20 +29,26 @@ async def lifespan(app: FastAPI):
     
     logger.info("Starting TravelMate AI Agent Backend (Gemini-Powered)...")
     
-    # Initialize Redis
+    # Initialize Redis (optional)
     redis_service = RedisService()
-    await redis_service.connect()
-    logger.info("Redis connected")
+    try:
+        await redis_service.connect()
+        logger.info("✅ Redis connected")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis connection failed: {e}")
+        logger.warning("⚠️ Running without Redis (sessions will use in-memory storage)")
+        redis_service = None
     
     # Initialize Agent Service with Gemini
     agent_service = AgentService(redis_service)
-    logger.info("Gemini agent service initialized")
+    logger.info("✅ Gemini agent service initialized")
     
     yield
     
     # Cleanup
     logger.info("Shutting down AI Agent Backend...")
-    await redis_service.disconnect()
+    if redis_service:
+        await redis_service.disconnect()
 
 
 app = FastAPI(

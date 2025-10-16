@@ -24,6 +24,7 @@ class AgentService:
     
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
+        self._memory_sessions: Dict[str, Dict[str, Any]] = {}  # In-memory fallback
         self.llm = self._initialize_llm()
         self.tools = self._initialize_tools()
         self.agent_executor = self._create_agent()
@@ -113,18 +114,20 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
             return_intermediate_steps=False
         )
     
-    async def create_session(self, user_id: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+    async def create_session(self, user_id: str, session_id: str = None, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Create a new chat session
         
         Args:
             user_id: User identifier
+            session_id: Optional session ID (auto-generate if not provided)
             metadata: Optional session metadata
         
         Returns:
             Session ID
         """
-        session_id = str(uuid.uuid4())
+        if not session_id:
+            session_id = str(uuid.uuid4())
         
         session_data = {
             "user_id": user_id,
@@ -135,7 +138,11 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
             "location_confirmed": False
         }
         
-        await self.redis.set_session(session_id, session_data)
+        if self.redis:
+            await self.redis.set_session(session_id, session_data)
+        else:
+            self._memory_sessions[session_id] = session_data
+            
         logger.info(f"Created session {session_id} for user {user_id}")
         
         return session_id
@@ -148,7 +155,10 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
             session_id: Session identifier
             user_id: User identifier for authorization
         """
-        session_data = await self.redis.get_session(session_id)
+        if self.redis:
+            session_data = await self.redis.get_session(session_id)
+        else:
+            session_data = self._memory_sessions.get(session_id)
         
         if not session_data:
             raise ValueError(f"Session {session_id} not found")
@@ -156,7 +166,10 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
         if session_data.get("user_id") != user_id:
             raise ValueError("Unauthorized session access")
         
-        await self.redis.delete_session(session_id)
+        if self.redis:
+            await self.redis.delete_session(session_id)
+        else:
+            self._memory_sessions.pop(session_id, None)
         logger.info(f"Deleted session {session_id}")
     
     async def process_message(
@@ -179,12 +192,23 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
             ChatResponse with agent's reply and actions
         """
         try:
-            # Retrieve session
-            session_data = await self.redis.get_session(session_id)
-            if not session_data:
-                # Create new session if not found
-                await self.create_session(user_id)
+            # Retrieve session (use in-memory if Redis not available)
+            if self.redis:
                 session_data = await self.redis.get_session(session_id)
+                if not session_data:
+                    # Create new session if not found
+                    await self.create_session(user_id, session_id)
+                    session_data = await self.redis.get_session(session_id)
+            else:
+                # In-memory session fallback
+                session_data = self._memory_sessions.get(session_id)
+                if not session_data:
+                    await self.create_session(user_id, session_id)
+                    session_data = self._memory_sessions.get(session_id)
+            
+            # Ensure session_data is not None
+            if not session_data:
+                raise ValueError(f"Failed to retrieve or create session {session_id}")
             
             # Build chat history
             chat_history = self._build_chat_history(session_data.get("chat_history", []))
@@ -220,7 +244,10 @@ Remember: User safety and data accuracy are paramount. Never proceed without pro
                 session_data["location_confirmed"] = True
             
             # Save session
-            await self.redis.set_session(session_id, session_data)
+            if self.redis:
+                await self.redis.set_session(session_id, session_data)
+            else:
+                self._memory_sessions[session_id] = session_data
             
             # Parse map actions from response
             map_actions = self._parse_map_actions(agent_response)

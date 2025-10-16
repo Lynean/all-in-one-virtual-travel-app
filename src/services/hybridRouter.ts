@@ -1,48 +1,16 @@
 import { agentService, AgentContext, AgentResponse } from './agentService';
-import { generateAIResponse, AIResponse } from './gemini';
 
 /**
- * Hybrid Router - Intelligently routes queries between Gemini and LangChain
+ * Agent Router - Routes all queries to LangChain Agent backend
  * 
- * ROUTING LOGIC:
- * - Simple queries → Gemini (fast, cheap)
- * - Complex queries → LangChain Agent (powerful, autonomous)
+ * All queries are processed by the Gemini-powered LangChain agent
+ * for consistent, autonomous responses with tool usage.
  */
-
-// Keywords that indicate complex queries requiring LangChain
-const COMPLEX_QUERY_INDICATORS = [
-  // Multi-day planning
-  'itinerary', 'trip plan', 'day by day', 'schedule', 'multi-day', 'week trip',
-  '3 days', '4 days', '5 days', 'weekend trip', 'vacation plan',
-  
-  // Budget optimization
-  'budget', 'cost', 'price', 'expensive', 'cheap', 'affordable', 'save money',
-  'how much', 'total cost', 'breakdown',
-  
-  // Weather-based planning
-  'weather forecast', 'rain', 'sunny', 'temperature', 'climate', 'best time',
-  'weather dependent', 'if it rains', 'weather alternative',
-  
-  // Currency conversion
-  'convert', 'exchange rate', 'currency', 'dollars to', 'euros to', 'usd', 'eur',
-  
-  // Complex multi-step workflows
-  'first', 'then', 'after that', 'next', 'finally', 'step by step',
-  'optimize', 'best route', 'most efficient', 'compare',
-];
-
-// Keywords for simple queries that Gemini handles well
-const SIMPLE_QUERY_INDICATORS = [
-  'nearby', 'near me', 'around here', 'close to',
-  'restaurant', 'hotel', 'cafe', 'shop', 'store',
-  'directions to', 'how to get to', 'route to',
-  'what is', 'tell me about', 'information about',
-];
 
 interface HybridResponse {
   message: string;
   mapActions: any[];
-  source: 'gemini' | 'langchain';
+  source: 'langchain';
   searchResults?: any[];
   directionsInfo?: any;
 }
@@ -53,6 +21,10 @@ export class HybridRouter {
   constructor() {
     // Check if backend is available
     this.useBackend = this.checkBackendAvailability();
+    
+    if (!this.useBackend) {
+      console.warn('⚠️ Backend not configured. Agent will not work.');
+    }
   }
 
   private checkBackendAvailability(): boolean {
@@ -61,50 +33,7 @@ export class HybridRouter {
   }
 
   /**
-   * Determine if query should use LangChain agent
-   */
-  private shouldUseLangChain(message: string): boolean {
-    if (!this.useBackend) {
-      return false; // Backend not available, use Gemini
-    }
-
-    const lowerMessage = message.toLowerCase();
-
-    // Check for complex query indicators
-    const hasComplexIndicator = COMPLEX_QUERY_INDICATORS.some(
-      keyword => lowerMessage.includes(keyword)
-    );
-
-    // Check for simple query indicators
-    const hasSimpleIndicator = SIMPLE_QUERY_INDICATORS.some(
-      keyword => lowerMessage.includes(keyword)
-    );
-
-    // Decision logic
-    if (hasComplexIndicator && !hasSimpleIndicator) {
-      return true; // Definitely complex
-    }
-
-    if (hasSimpleIndicator && !hasComplexIndicator) {
-      return false; // Definitely simple
-    }
-
-    // Check message length and complexity
-    const wordCount = message.split(/\s+/).length;
-    const hasMultipleSentences = message.split(/[.!?]+/).length > 2;
-    const hasNumbers = /\d+/.test(message);
-
-    // Use LangChain for longer, multi-sentence queries with numbers
-    if (wordCount > 20 && hasMultipleSentences && hasNumbers) {
-      return true;
-    }
-
-    // Default to Gemini for speed
-    return false;
-  }
-
-  /**
-   * Route query to appropriate service
+   * Route all queries to LangChain agent
    */
   async routeQuery(
     message: string,
@@ -112,33 +41,23 @@ export class HybridRouter {
     currentLocation?: { lat: number; lng: number } | null,
     locationConfirmed?: boolean
   ): Promise<HybridResponse> {
-    const useLangChain = this.shouldUseLangChain(message);
+    if (!this.useBackend) {
+      throw new Error('Backend not available. Please configure VITE_BACKEND_URL in .env');
+    }
 
-    console.log(`🔀 Routing to: ${useLangChain ? 'LangChain Agent' : 'Gemini'}`);
+    console.log('🤖 Routing to: LangChain Agent (Gemini-powered)');
     console.log(`📝 Query: ${message.substring(0, 50)}...`);
 
     try {
-      if (useLangChain) {
-        return await this.routeToLangChain(message, destination, currentLocation, locationConfirmed);
-      } else {
-        return await this.routeToGemini(message, destination, currentLocation);
-      }
+      return await this.routeToLangChain(message, destination, currentLocation, locationConfirmed);
     } catch (error) {
-      console.error(`Error with ${useLangChain ? 'LangChain' : 'Gemini'}:`, error);
-      
-      // Fallback to the other service
-      if (useLangChain) {
-        console.log('⚠️ LangChain failed, falling back to Gemini');
-        return await this.routeToGemini(message, destination, currentLocation);
-      } else {
-        console.log('⚠️ Gemini failed, trying LangChain');
-        return await this.routeToLangChain(message, destination, currentLocation, locationConfirmed);
-      }
+      console.error('Error with LangChain Agent:', error);
+      throw new Error(`Agent failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Route to LangChain agent (complex queries)
+   * Route to LangChain agent
    */
   private async routeToLangChain(
     message: string,
@@ -169,29 +88,6 @@ export class HybridRouter {
       message: response.message,
       mapActions: response.map_actions,
       source: 'langchain',
-    };
-  }
-
-  /**
-   * Route to Gemini (simple queries)
-   */
-  private async routeToGemini(
-    message: string,
-    destination?: string,
-    currentLocation?: { lat: number; lng: number } | null
-  ): Promise<HybridResponse> {
-    const response: AIResponse = await generateAIResponse(
-      message,
-      destination,
-      currentLocation
-    );
-
-    return {
-      message: response.text,
-      mapActions: response.mapActions,
-      source: 'gemini',
-      searchResults: response.searchResults,
-      directionsInfo: response.directionsInfo,
     };
   }
 
