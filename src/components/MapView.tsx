@@ -4,7 +4,8 @@ import { loadGoogleMapsScript, createMap, createMarker, createInfoWindow, MapLoc
 import { hybridRouter } from '../services/hybridRouter';
 import { useStore } from '../store/useStore';
 import { computeRoutes, latLngToLocation, decodePolyline, TravelMode } from '../services/routesApi';
-import { searchNearby, convertLegacyPlaceType, latLngToLocation as placesLatLngToLocation, locationToLatLng } from '../services/placesApi';
+import { searchNearby, searchText, convertLegacyPlaceType, latLngToLocation as placesLatLngToLocation, locationToLatLng } from '../services/placesApi';
+import { configService } from '../services/configService';
 
 export const MapView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -14,12 +15,21 @@ export const MapView: React.FC = () => {
   const [mapError, setMapError] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isScriptLoaded, setIsScriptLoaded] = useState(false);
+  const [transitInstructions, setTransitInstructions] = useState<any>(null);
+  const [allRoutes, setAllRoutes] = useState<any[]>([]);
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
   const userMarkerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
-  const directionsPolylineRef = useRef<google.maps.Polyline | null>(null);
+  const directionsPolylinesRef = useRef<google.maps.Polyline[]>([]);
+  
+  // Cache for geocoding results to prevent duplicate API calls
+  const geocodeCache = useRef<Map<string, MapLocation>>(new Map());
+  const pendingGeocodeRequests = useRef<Set<string>>(new Set());
+  const lastGeocodingTime = useRef<number>(0);
+  const GEOCODING_RATE_LIMIT = 200; // Minimum ms between geocoding requests
 
   const { 
     destination, 
@@ -29,23 +39,41 @@ export const MapView: React.FC = () => {
     setMapInstance 
   } = useStore();
 
+  // Helper function: Calculate distance between two points (Haversine formula)
+  const calculateDistance = (point1: { lat: number; lng: number }, point2: { lat: number; lng: number }): number => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = (point1.lat * Math.PI) / 180;
+    const φ2 = (point2.lat * Math.PI) / 180;
+    const Δφ = ((point2.lat - point1.lat) * Math.PI) / 180;
+    const Δλ = ((point2.lng - point1.lng) * Math.PI) / 180;
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // Distance in meters
+  };
+
   // Step 1: Load Google Maps Script
   useEffect(() => {
     const loadScript = async () => {
       console.log('🗺️ Loading Google Maps script...');
-      const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
       
-      console.log('API Key present:', !!apiKey);
-      
-      if (!apiKey || apiKey === 'undefined') {
-        const errorMsg = 'Google Maps API key not configured. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file.';
-        console.error('❌', errorMsg);
-        setMapError(errorMsg);
-        setIsMapLoading(false);
-        return;
-      }
-
       try {
+        // Get API key from config service (tries backend first, falls back to env)
+        const apiKey = await configService.getGoogleMapsApiKey();
+        
+        console.log('API Key retrieved:', !!apiKey);
+        
+        if (!apiKey || apiKey === 'undefined') {
+          const errorMsg = 'Google Maps API key not configured. Please configure it in the admin panel or add VITE_GOOGLE_MAPS_API_KEY to your .env file.';
+          console.error('❌', errorMsg);
+          setMapError(errorMsg);
+          setIsMapLoading(false);
+          return;
+        }
+
         await loadGoogleMapsScript({ apiKey, libraries: ['places', 'geometry', 'marker'] });
         console.log('✅ Google Maps script loaded');
         setIsScriptLoaded(true);
@@ -91,21 +119,30 @@ export const MapView: React.FC = () => {
 
     console.log('🗺️ Creating map instance...');
     
-    try {
-      const defaultCenter = { lat: 40.7128, lng: -74.0060 };
-      const mapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID;
-      
-      console.log('Map ID:', mapId || 'not set');
-      
-      mapInstanceRef.current = createMap(mapRef.current, defaultCenter, 13, mapId);
-      setMapInstance(mapInstanceRef.current);
-      setIsMapLoading(false);
-      console.log('✅ Map instance created and stored');
-    } catch (error) {
-      console.error('❌ Failed to create map:', error);
-      setMapError(`Failed to create map: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setIsMapLoading(false);
-    }
+    const initializeMap = async () => {
+      try {
+        const defaultCenter = { lat: 40.7128, lng: -74.0060 };
+        
+        // Get Map ID from config service
+        const mapId = await configService.getGoogleMapsMapId().catch(() => {
+          console.warn('Map ID not configured, using default');
+          return undefined;
+        });
+        
+        console.log('Map ID:', mapId || 'not set');
+        
+        mapInstanceRef.current = createMap(mapRef.current!, defaultCenter, 13, mapId);
+        setMapInstance(mapInstanceRef.current);
+        setIsMapLoading(false);
+        console.log('✅ Map instance created and stored');
+      } catch (error) {
+        console.error('❌ Failed to create map:', error);
+        setMapError(`Failed to create map: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setIsMapLoading(false);
+      }
+    };
+
+    initializeMap();
   }, [isScriptLoaded, setMapInstance]);
 
   // Helper function to create a blue dot marker for user location
@@ -232,15 +269,74 @@ export const MapView: React.FC = () => {
         locationConfirmed
       );
 
+      console.log('🎯 Agent response received:', response);
+      console.log('🎯 Map actions:', response.mapActions);
+      console.log('🎯 App actions:', response.appActions);
+
       // Handle map actions from AI
       if (response.mapActions && response.mapActions.length > 0) {
+        console.log(`🎯 Processing ${response.mapActions.length} map actions`);
         for (const action of response.mapActions) {
           await handleMapAction(action);
         }
+      } else {
+        console.log('⚠️ No map actions received');
       }
 
-      // Show AI response
-      if (response.message) {
+      // Handle app actions (checklists, etc.)
+      if (response.appActions && response.appActions.length > 0) {
+        console.log('✅ App actions received in MapView:', response.appActions);
+        response.appActions.forEach((action: any) => {
+          if (action.type === 'checklist' && action.data) {
+            console.log('✅ Processing checklist action in MapView:', action.data);
+            const checklistData = action.data;
+            
+            let totalItems = 0;
+            
+            // Handle new categorized format
+            if (checklistData.categories && Array.isArray(checklistData.categories)) {
+              console.log(`✅ Processing categorized checklist with ${checklistData.categories.length} categories`);
+              checklistData.categories.forEach((categoryObj: any) => {
+                const categoryKey = categoryObj.category
+                  .toLowerCase()
+                  .replace(/\s+/g, '_')
+                  .replace(/[^a-z0-9_]/g, '');
+                
+                if (categoryObj.items && Array.isArray(categoryObj.items)) {
+                  console.log(`  Category "${categoryObj.category}": ${categoryObj.items.length} items`);
+                  categoryObj.items.forEach((item: any) => {
+                    useStore.getState().addChecklistItem({
+                      text: item.text,
+                      completed: item.checked || false,
+                      category: categoryKey
+                    });
+                    totalItems++;
+                  });
+                }
+              });
+              setLocationError(`✅ Added ${totalItems} items across ${checklistData.categories.length} categories to your checklist: "${checklistData.title}". Check the Checklist tab!`);
+            }
+            // Handle old flat format
+            else if (checklistData.items && Array.isArray(checklistData.items)) {
+              console.log(`✅ Adding ${checklistData.items.length} checklist items (flat format) to store from MapView`);
+              checklistData.items.forEach((item: any, index: number) => {
+                const category = mapPriorityToCategory(item.priority);
+                console.log(`  Item ${index + 1}: "${item.text}" (category: ${category})`);
+                useStore.getState().addChecklistItem({
+                  text: item.text,
+                  completed: item.checked || false,
+                  category: category
+                });
+              });
+              console.log('✅ All items added to store from MapView');
+              setLocationError(`✅ Added ${checklistData.items.length} items to your checklist: "${checklistData.title}". Check the Checklist tab!`);
+            }
+          }
+        });
+      }
+
+      // Show AI response if no app actions
+      if (response.message && (!response.appActions || response.appActions.length === 0)) {
         setLocationError(response.message);
       }
     } catch (error) {
@@ -251,13 +347,57 @@ export const MapView: React.FC = () => {
     }
   };
 
+  // Helper function to map priority to category (same as AIGuide)
+  const mapPriorityToCategory = (priority: string): 'before' | 'arrival' | 'during' | 'departure' => {
+    switch (priority?.toLowerCase()) {
+      case 'high':
+        return 'before';
+      case 'medium':
+        return 'during';
+      case 'low':
+        return 'departure';
+      default:
+        return 'during';
+    }
+  };
+
   const handleMapAction = async (action: any) => {
     if (!mapInstanceRef.current) return;
 
+    console.log('🎯 Handling map action:', action.type, action.data);
+
     switch (action.type) {
       case 'search':
-        if (action.data.query) {
-          await performSearch(action.data.query);
+        // New format: textQuery with optional parameters
+        if (action.data.textQuery) {
+          console.log('🔍 Using Places Text Search API:', action.data.textQuery);
+          await performTextSearch(
+            action.data.textQuery,
+            action.data.locationBias,
+            action.data.priceLevels,
+            action.data.minRating,
+            action.data.openNow,
+            action.data.includedType,
+            action.data.needsGeocode,
+            action.data.geocodeLocation,
+            action.data.radius
+          );
+        }
+        // Legacy format: query with coordinates
+        else if (action.data.query) {
+          if (action.data.latitude && action.data.longitude) {
+            await performNearbySearch(
+              action.data.query,
+              { lat: action.data.latitude, lng: action.data.longitude },
+              action.data.radius,
+              action.data.priceLevel,
+              action.data.minRating,
+              action.data.openNow
+            );
+          } else {
+            // Otherwise do geocoding search
+            await performSearch(action.data.query);
+          }
         }
         break;
       case 'marker':
@@ -271,27 +411,230 @@ export const MapView: React.FC = () => {
         }
         break;
       case 'directions':
+      case 'route':  // Support both 'directions' and 'route' type
         if (action.data.origin && action.data.destination) {
-          await showDirections(action.data.origin, action.data.destination, action.data.travelMode);
+          await showDirectionsFromAgent(
+            action.data.origin, 
+            action.data.destination, 
+            action.data.travelMode || action.data.travel_mode || 'TRANSIT'
+          );
         }
         break;
+    }
+  };
+
+  // Helper to parse coordinate string "lat,lng" to MapLocation
+  const parseCoordinateString = (coordStr: string): MapLocation | null => {
+    try {
+      const parts = coordStr.split(',');
+      if (parts.length === 2) {
+        const lat = parseFloat(parts[0].trim());
+        const lng = parseFloat(parts[1].trim());
+        if (!isNaN(lat) && !isNaN(lng)) {
+          return { lat, lng };
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse coordinates:', coordStr, e);
+    }
+    return null;
+  };
+
+  // Helper to geocode an address to coordinates (with caching and rate limiting)
+  const geocodeAddress = async (address: string): Promise<MapLocation | null> => {
+    // Check cache first
+    const cacheKey = address.toLowerCase().trim();
+    if (geocodeCache.current.has(cacheKey)) {
+      console.log('📦 Using cached geocode result for:', address);
+      return geocodeCache.current.get(cacheKey)!;
+    }
+
+    // Check if request is already pending
+    if (pendingGeocodeRequests.current.has(cacheKey)) {
+      console.log('⏳ Geocode request already pending for:', address);
+      // Wait a bit and check cache again
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return geocodeCache.current.get(cacheKey) || null;
+    }
+
+    // Rate limiting - wait if too soon since last request
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastGeocodingTime.current;
+    if (timeSinceLastRequest < GEOCODING_RATE_LIMIT) {
+      const waitTime = GEOCODING_RATE_LIMIT - timeSinceLastRequest;
+      console.log(`⏱️ Rate limiting: waiting ${waitTime}ms before geocoding`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+
+    try {
+      pendingGeocodeRequests.current.add(cacheKey);
+      lastGeocodingTime.current = Date.now();
+      console.log('🌍 Geocoding address:', address);
+      
+      const geocoder = new google.maps.Geocoder();
+      const result = await geocoder.geocode({ address });
+      
+      if (result.results && result.results.length > 0) {
+        const location = result.results[0].geometry.location;
+        const mapLocation = { lat: location.lat(), lng: location.lng() };
+        
+        // Cache the result
+        geocodeCache.current.set(cacheKey, mapLocation);
+        console.log('✅ Geocoded and cached:', address, '→', mapLocation);
+        
+        return mapLocation;
+      }
+    } catch (e) {
+      console.error('❌ Geocoding failed for:', address, e);
+      // If it's a quota error, increase the rate limit
+      if (e instanceof Error && e.message.includes('OVER_QUERY_LIMIT')) {
+        console.warn('⚠️ Geocoding quota exceeded. Consider implementing longer delays.');
+      }
+    } finally {
+      pendingGeocodeRequests.current.delete(cacheKey);
+    }
+    return null;
+  };
+
+  // Show directions from agent (handles both coordinate strings and addresses)
+  const showDirectionsFromAgent = async (
+    origin: string | MapLocation,
+    destination: string | MapLocation,
+    travelMode: string = 'TRANSIT'
+  ) => {
+    if (!mapInstanceRef.current) {
+      console.error('❌ Map instance not available');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      console.log('🗺️ showDirectionsFromAgent called');
+      console.log('  - origin:', origin, typeof origin);
+      console.log('  - destination:', destination, typeof destination);
+      console.log('  - travelMode:', travelMode);
+
+      // Parse origin
+      let originLocation: MapLocation | null = null;
+      if (typeof origin === 'string') {
+        // Try to parse as coordinates first
+        originLocation = parseCoordinateString(origin);
+        if (!originLocation) {
+          // Geocode as address
+          originLocation = await geocodeAddress(origin);
+        }
+      } else {
+        originLocation = origin;
+      }
+
+      // Parse destination
+      let destLocation: MapLocation | null = null;
+      if (typeof destination === 'string') {
+        // Try to parse as coordinates first
+        destLocation = parseCoordinateString(destination);
+        if (!destLocation) {
+          // Geocode as address
+          destLocation = await geocodeAddress(destination);
+        }
+      } else {
+        destLocation = destination;
+      }
+
+      if (!originLocation || !destLocation) {
+        setLocationError('Could not determine route locations. Please try again.');
+        return;
+      }
+
+      console.log('✅ Resolved locations:', { originLocation, destLocation });
+
+      // Now call the original showDirections with resolved coordinates
+      await showDirections(originLocation, destLocation, travelMode);
+    } catch (error) {
+      console.error('Error processing directions:', error);
+      setLocationError('Failed to process directions. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Helper function to draw colored route segments for transit
+  const drawColoredRouteSegments = (route: any) => {
+    // Clear existing polylines
+    directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
+    directionsPolylinesRef.current = [];
+
+    if (!route.legs || route.legs.length === 0) return;
+
+    const bounds = new google.maps.LatLngBounds();
+    
+    route.legs.forEach((leg: any) => {
+      if (!leg.steps) return;
+      
+      leg.steps.forEach((step: any, index: number) => {
+        if (!step.polyline?.encodedPolyline) return;
+        
+        const path = decodePolyline(step.polyline.encodedPolyline);
+        let strokeColor = '#666666'; // Default gray
+        let strokeWeight = 5;
+        let zIndex = 1;
+        
+        if (step.travelMode === 'WALK') {
+          // Walking segments - dotted gray line
+          strokeColor = '#888888';
+          strokeWeight = 3;
+          zIndex = 0; // Lower z-index so transit lines appear on top
+        } else if (step.transitDetails) {
+          // Transit segments - use line color if available
+          strokeColor = step.transitDetails.transitLine?.color || '#4F46E5';
+          strokeWeight = 6;
+          zIndex = 2;
+        }
+        
+        const polyline = new google.maps.Polyline({
+          path,
+          geodesic: true,
+          strokeColor,
+          strokeOpacity: step.travelMode === 'WALK' ? 0.6 : 0.9,
+          strokeWeight,
+          map: mapInstanceRef.current,
+          zIndex,
+          ...(step.travelMode === 'WALK' && {
+            icons: [{
+              icon: {
+                path: 'M 0,-1 0,1',
+                strokeOpacity: 1,
+                scale: 3
+              },
+              offset: '0',
+              repeat: '15px'
+            }]
+          })
+        });
+        
+        directionsPolylinesRef.current.push(polyline);
+        path.forEach(point => bounds.extend(point));
+      });
+    });
+    
+    // Fit map to route bounds
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.fitBounds(bounds);
     }
   };
 
   const showDirections = async (
     origin: MapLocation,
     destination: MapLocation,
-    travelMode: string = 'DRIVE'
+    travelMode: string = 'TRANSIT'
   ) => {
     if (!mapInstanceRef.current) return;
 
     try {
       setIsProcessing(true);
 
-      // Clear existing directions polyline
-      if (directionsPolylineRef.current) {
-        directionsPolylineRef.current.setMap(null);
-      }
+      // Clear existing directions polylines
+      directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
+      directionsPolylinesRef.current = [];
 
       // Clear existing markers
       markersRef.current.forEach(marker => marker.map = null);
@@ -318,13 +661,24 @@ export const MapView: React.FC = () => {
         return;
       }
 
+      // Store all routes and reset selection
+      setAllRoutes(response.routes);
+      setSelectedRouteIndex(0);
+      
       const route = response.routes[0];
+      console.log('🗺️ Found', response.routes.length, 'route(s)');
+      console.log('🗺️ Route response:', route);
+      console.log('🚇 Travel mode:', travelMode);
+      console.log('🚇 Route legs:', route.legs);
 
-      // Decode and display the polyline
-      if (route.polyline.encodedPolyline) {
+      // Draw route on map - use colored segments for transit, single line for others
+      if (travelMode === 'TRANSIT') {
+        drawColoredRouteSegments(route);
+      } else if (route.polyline.encodedPolyline) {
+        // Non-transit: draw single colored polyline
         const path = decodePolyline(route.polyline.encodedPolyline);
         
-        directionsPolylineRef.current = new google.maps.Polyline({
+        const polyline = new google.maps.Polyline({
           path,
           geodesic: true,
           strokeColor: '#4F46E5',
@@ -332,6 +686,8 @@ export const MapView: React.FC = () => {
           strokeWeight: 5,
           map: mapInstanceRef.current
         });
+        
+        directionsPolylinesRef.current.push(polyline);
 
         // Fit map to route bounds
         const bounds = new google.maps.LatLngBounds();
@@ -349,12 +705,113 @@ export const MapView: React.FC = () => {
       const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
       const duration = route.localizedValues?.duration?.text || route.duration;
       
-      setLocationError(`Route found: ${distance}, ${duration}`);
+      // Extract transit instructions if travel mode is TRANSIT
+      if (travelMode === 'TRANSIT' && route.legs && route.legs.length > 0) {
+        console.log('🚇 Processing TRANSIT mode');
+        const leg = route.legs[0];
+        const transitSteps: any[] = [];
+        
+        console.log('🚇 Leg steps:', leg.steps);
+        
+        if (leg.steps) {
+          leg.steps.forEach((step: any, index: number) => {
+            console.log(`🚇 Step ${index + 1}:`, step);
+            if (step.transitDetails) {
+              // This is a transit step (bus, subway, train, etc.)
+              transitSteps.push({
+                type: 'transit',
+                index: index + 1,
+                transitDetails: step.transitDetails,
+                distance: step.localizedValues?.distance?.text || `${(step.distanceMeters / 1000).toFixed(1)} km`,
+                duration: step.localizedValues?.staticDuration?.text || step.staticDuration
+              });
+            } else if (step.travelMode === 'WALK') {
+              // Walking step
+              transitSteps.push({
+                type: 'walk',
+                index: index + 1,
+                distance: step.localizedValues?.distance?.text || `${(step.distanceMeters / 1000).toFixed(1)} km`,
+                duration: step.localizedValues?.staticDuration?.text || step.staticDuration,
+                instruction: step.navigationInstruction?.instructions || 'Walk'
+              });
+            }
+          });
+        }
+        
+        console.log('🚇 Transit steps collected:', transitSteps);
+        
+        const transitData = {
+          steps: transitSteps,
+          totalDistance: distance,
+          totalDuration: duration,
+          fare: route.travelAdvisory?.transitFare
+        };
+        
+        console.log('🚇 Setting transit instructions:', transitData);
+        setTransitInstructions(transitData);
+        
+        setLocationError(`Transit route found: ${distance}, ${duration}`);
+      } else {
+        setTransitInstructions(null);
+        setLocationError(`Route found: ${distance}, ${duration}`);
+      }
     } catch (error) {
       console.error('Error showing directions:', error);
       setLocationError('Failed to get directions. Please try again.');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // Function to switch between alternative routes
+  const switchToRoute = (routeIndex: number) => {
+    if (!allRoutes || routeIndex >= allRoutes.length) return;
+    
+    setSelectedRouteIndex(routeIndex);
+    const route = allRoutes[routeIndex];
+    
+    // Draw route with colored segments
+    drawColoredRouteSegments(route);
+    
+    // Update transit instructions for the selected route
+    const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
+    const duration = route.localizedValues?.duration?.text || route.duration;
+    
+    if (route.legs && route.legs.length > 0) {
+      const leg = route.legs[0];
+      const transitSteps: any[] = [];
+      
+      if (leg.steps) {
+        leg.steps.forEach((step: any, index: number) => {
+          if (step.transitDetails) {
+            transitSteps.push({
+              type: 'transit',
+              index: index + 1,
+              transitDetails: step.transitDetails,
+              distance: step.localizedValues?.distance?.text || `${(step.distanceMeters / 1000).toFixed(1)} km`,
+              duration: step.localizedValues?.staticDuration?.text || step.staticDuration
+            });
+          } else if (step.travelMode === 'WALK') {
+            transitSteps.push({
+              type: 'walk',
+              index: index + 1,
+              distance: step.localizedValues?.distance?.text || `${(step.distanceMeters / 1000).toFixed(1)} km`,
+              duration: step.localizedValues?.staticDuration?.text || step.staticDuration,
+              instruction: step.navigationInstruction?.instructions || 'Walk'
+            });
+          }
+        });
+      }
+      
+      const transitData = {
+        steps: transitSteps,
+        totalDistance: distance,
+        totalDuration: duration,
+        fare: route.travelAdvisory?.transitFare
+      };
+      
+      setTransitInstructions(transitData);
+      setLocationError(`Route ${routeIndex + 1}: ${distance}, ${duration}`);
     }
   };
 
@@ -396,6 +853,385 @@ export const MapView: React.FC = () => {
     } catch (error) {
       console.error('Geocoding error:', error);
       setLocationError('Could not find location. Please try a different search.');
+    }
+  };
+
+  // Perform nearby search using Places API
+  const performNearbySearch = async (
+    query: string, 
+    location: MapLocation, 
+    radius: number = 5000,
+    priceLevel?: string,
+    minRating?: number,
+    openNow?: boolean
+  ) => {
+    if (!mapInstanceRef.current) return;
+
+    try {
+      setIsProcessing(true);
+      console.log('🔍 Performing nearby search:', { query, location, radius, priceLevel, minRating, openNow });
+
+      // Clear existing markers
+      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current = [];
+
+      // Normalize query
+      let normalizedQuery = query.toLowerCase().trim();
+      
+      // Check if query looks like a specific place name (has capital letters or specific words)
+      // Indicators of specific place: proper nouns, contains "on", "at", "near", street names
+      const specificPlaceIndicators = [
+        /^[A-Z]/, // Starts with capital (proper noun)
+        /\b(on|at|near|street|road|avenue|lane|drive|blvd|boulevard)\b/i,
+        /\d+/, // Contains numbers (addresses)
+        query.split(' ').length >= 3, // 3+ words usually means specific place
+      ];
+      
+      const looksLikeSpecificPlace = specificPlaceIndicators.some(indicator => 
+        typeof indicator === 'boolean' ? indicator : indicator.test(query)
+      );
+
+      // Common PURE category keywords (not part of business names)
+      const pureCategoryKeywords = [
+        'restaurant', 'hotel', 'cafe', 'coffee', 'bar', 'pub',
+        'attraction', 'museum', 'park', 'hospital', 'pharmacy',
+        'gas station', 'bank', 'atm', 'mall', 'supermarket',
+        'gym', 'spa', 'airport', 'train station', 'bus station'
+      ];
+
+      // Check if query is EXACTLY a category (not a business name containing the word)
+      const isPureCategory = pureCategoryKeywords.some(keyword => 
+        normalizedQuery === keyword || normalizedQuery === keyword + 's'
+      );
+
+      // Decide: specific place if it looks specific, OR if it's not a pure category
+      const isCategory = isPureCategory && !looksLikeSpecificPlace;
+
+      let response;
+
+      if (!isCategory) {
+        // Specific place name - use Text Search
+        console.log('🔍 Using Text Search for specific place:', query);
+        response = await searchText({
+          textQuery: query,
+          locationBias: {
+            circle: {
+              center: placesLatLngToLocation(location),
+              radius
+            }
+          },
+          maxResultCount: 20
+        });
+      } else {
+        // Category search - use Nearby Search with place types
+        console.log('🔍 Using Nearby Search for category:', query);
+        
+        // Remove 's' at end if plural
+        if (normalizedQuery.endsWith('s')) {
+          normalizedQuery = normalizedQuery.slice(0, -1);
+        }
+        
+        // Map common queries to place types
+        const queryMap: Record<string, string> = {
+          'restaurant': 'restaurant',
+          'hotel': 'lodging',
+          'coffee shop': 'cafe',
+          'cafe': 'cafe',
+          'bar': 'bar',
+          'attraction': 'tourist_attraction',
+          'museum': 'museum',
+          'park': 'park',
+          'hospital': 'hospital',
+          'pharmacy': 'pharmacy',
+          'gas station': 'gas_station',
+          'bank': 'bank',
+          'atm': 'atm',
+          'shopping mall': 'shopping_mall',
+          'supermarket': 'supermarket',
+          'gym': 'gym',
+          'spa': 'spa',
+          'airport': 'airport',
+          'train station': 'train_station',
+          'bus station': 'bus_station',
+          'food': 'restaurant',
+        };
+
+        const placeType = queryMap[normalizedQuery] || convertLegacyPlaceType(normalizedQuery);
+        console.log('🔍 Using place type:', placeType);
+
+        response = await searchNearby({
+          locationRestriction: {
+            circle: {
+              center: placesLatLngToLocation(location),
+              radius
+            }
+          },
+          includedTypes: [placeType],
+          maxResultCount: 20
+        });
+      }
+
+      if (!response.places || response.places.length === 0) {
+        setLocationError(`No ${query} found nearby.`);
+        return;
+      }
+
+      console.log(`✅ Found ${response.places.length} places (before filtering)`);
+
+      // Client-side filtering (Google API doesn't support all filters server-side)
+      let filteredPlaces = response.places;
+
+      // Filter by price level
+      if (priceLevel) {
+        const priceLevelMap: Record<string, string[]> = {
+          'FREE': ['FREE'],
+          'INEXPENSIVE': ['FREE', 'INEXPENSIVE'],
+          'MODERATE': ['FREE', 'INEXPENSIVE', 'MODERATE'],
+          'EXPENSIVE': ['FREE', 'INEXPENSIVE', 'MODERATE', 'EXPENSIVE'],
+          'VERY_EXPENSIVE': ['FREE', 'INEXPENSIVE', 'MODERATE', 'EXPENSIVE', 'VERY_EXPENSIVE']
+        };
+        const allowedLevels = priceLevelMap[priceLevel] || [];
+        filteredPlaces = filteredPlaces.filter(place => 
+          !place.priceLevel || allowedLevels.includes(place.priceLevel)
+        );
+        console.log(`🔍 After price filter (${priceLevel}): ${filteredPlaces.length} places`);
+      }
+
+      // Filter by minimum rating
+      if (minRating) {
+        filteredPlaces = filteredPlaces.filter(place => 
+          place.rating && place.rating >= minRating
+        );
+        console.log(`🔍 After rating filter (>=${minRating}): ${filteredPlaces.length} places`);
+      }
+
+      // Filter by open now
+      if (openNow) {
+        filteredPlaces = filteredPlaces.filter(place => 
+          place.regularOpeningHours?.openNow === true
+        );
+        console.log(`🔍 After open_now filter: ${filteredPlaces.length} places`);
+      }
+
+      if (filteredPlaces.length === 0) {
+        setLocationError(`Found ${response.places.length} places, but none matched your filters (price, rating, or open now).`);
+        return;
+      }
+
+      console.log(`✅ Displaying ${filteredPlaces.length} places after filters`);
+
+      // Center map on search location
+      mapInstanceRef.current.setCenter(location);
+      mapInstanceRef.current.setZoom(14);
+
+      // Add markers for each filtered place
+      let markersCreated = 0;
+      for (const place of filteredPlaces) {
+        if (place.location) {
+          const placeLocation = locationToLatLng(place.location);
+          const marker = await createMarker(
+            mapInstanceRef.current,
+            placeLocation,
+            place.displayName?.text || 'Place'
+          );
+
+          // Create info window with place details
+          const infoContent = `
+            <div style="padding: 8px; max-width: 200px;">
+              <strong>${place.displayName?.text || 'Place'}</strong><br/>
+              ${place.formattedAddress || ''}<br/>
+              ${place.rating ? `⭐ ${place.rating}` : ''}
+            </div>
+          `;
+          const infoWindow = createInfoWindow(infoContent);
+
+          marker.addListener('click', () => {
+            infoWindow.open(mapInstanceRef.current!, marker);
+          });
+
+          markersRef.current.push(marker);
+          markersCreated++;
+        }
+      }
+
+      setLocationError(`Found ${markersCreated} ${query} nearby.`);
+    } catch (error) {
+      console.error('Nearby search error:', error);
+      setLocationError('Failed to search nearby places. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Perform text search using Places API (New) Text Search
+  const performTextSearch = async (
+    textQuery: string,
+    locationBias?: any,
+    priceLevels?: string[],
+    minRating?: number,
+    openNow?: boolean,
+    includedType?: string,
+    needsGeocode?: boolean,
+    geocodeLocation?: string,
+    radius?: number
+  ) => {
+    if (!mapInstanceRef.current) return;
+
+    try {
+      setIsProcessing(true);
+      console.log('🔍 Performing text search:', { textQuery, locationBias, priceLevels, minRating, openNow, includedType, needsGeocode, geocodeLocation });
+
+      // Clear existing markers
+      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current = [];
+
+      // If needsGeocode is true, geocode the location first
+      let finalLocationBias = locationBias;
+      let searchCenter: { lat: number; lng: number } | null = null;
+      let searchRadius = radius || 5000;
+      
+      if (needsGeocode && geocodeLocation) {
+        console.log('🌍 Geocoding location:', geocodeLocation);
+        const geocodedLocation = await geocodeAddress(geocodeLocation);
+        
+        if (geocodedLocation) {
+          console.log('✅ Geocoded to:', geocodedLocation);
+          searchCenter = geocodedLocation;
+          searchRadius = radius || 5000;
+          
+          // Use locationRestriction instead of locationBias for hard boundary
+          finalLocationBias = {
+            circle: {
+              center: {
+                latitude: geocodedLocation.lat,
+                longitude: geocodedLocation.lng
+              },
+              radius: searchRadius
+            }
+          };
+        } else {
+          console.warn('⚠️ Failed to geocode location, using textQuery as-is');
+          // Fall back to using textQuery without location bias
+        }
+      } else if (locationBias?.circle?.center) {
+        // Extract search center from existing locationBias
+        searchCenter = {
+          lat: locationBias.circle.center.latitude,
+          lng: locationBias.circle.center.longitude
+        };
+        searchRadius = locationBias.circle.radius || 5000;
+      }
+
+      // Build request - use locationRestriction for hard boundary
+      const request: any = {
+        textQuery,
+        maxResultCount: 20
+      };
+
+      if (finalLocationBias) {
+        // Use locationRestriction instead of locationBias to enforce radius
+        request.locationRestriction = finalLocationBias;
+      }
+
+      if (priceLevels && priceLevels.length > 0) {
+        request.priceLevels = priceLevels;
+      }
+
+      if (minRating !== undefined) {
+        request.minRating = minRating;
+      }
+
+      if (openNow !== undefined) {
+        request.openNow = openNow;
+      }
+
+      if (includedType) {
+        request.includedType = includedType;
+      }
+
+      console.log('📡 Text Search request:', request);
+
+      const response = await searchText(request);
+
+      if (!response.places || response.places.length === 0) {
+        setLocationError(`No results found for "${textQuery}".`);
+        return;
+      }
+
+      console.log(`✅ Found ${response.places.length} places via Text Search`);
+
+      // Client-side filtering: Remove places outside the radius (backup enforcement)
+      let filteredPlaces = response.places;
+      if (searchCenter && searchRadius) {
+        filteredPlaces = response.places.filter(place => {
+          if (!place.location) return false;
+          
+          const placeLocation = locationToLatLng(place.location);
+          const distance = calculateDistance(searchCenter!, placeLocation);
+          const isWithinRadius = distance <= searchRadius;
+          
+          if (!isWithinRadius) {
+            console.log(`🚫 Filtered out: ${place.displayName?.text} (${distance.toFixed(0)}m > ${searchRadius}m)`);
+          }
+          
+          return isWithinRadius;
+        });
+        
+        console.log(`📍 Filtered: ${response.places.length} → ${filteredPlaces.length} places within ${searchRadius}m radius`);
+      }
+
+      if (filteredPlaces.length === 0) {
+        setLocationError(`No results found within ${searchRadius}m for "${textQuery}".`);
+        return;
+      }
+
+      // Center map on search center or first result
+      if (searchCenter) {
+        mapInstanceRef.current.setCenter(searchCenter);
+        mapInstanceRef.current.setZoom(14);
+      } else if (filteredPlaces[0]?.location) {
+        const firstLocation = locationToLatLng(filteredPlaces[0].location);
+        mapInstanceRef.current.setCenter(firstLocation);
+        mapInstanceRef.current.setZoom(14);
+      }
+
+      // Add markers for each filtered place
+      let markersCreated = 0;
+      for (const place of filteredPlaces) {
+        if (place.location) {
+          const placeLocation = locationToLatLng(place.location);
+          const marker = await createMarker(
+            mapInstanceRef.current,
+            placeLocation,
+            place.displayName?.text || 'Place'
+          );
+
+          // Create info window with place details
+          const infoContent = `
+            <div style="padding: 8px; max-width: 200px;">
+              <strong>${place.displayName?.text || 'Place'}</strong><br/>
+              ${place.formattedAddress || ''}<br/>
+              ${place.rating ? `⭐ ${place.rating}` : ''}
+              ${place.priceLevel ? `<br/>💰 ${place.priceLevel.replace('PRICE_LEVEL_', '')}` : ''}
+            </div>
+          `;
+          const infoWindow = createInfoWindow(infoContent);
+
+          marker.addListener('click', () => {
+            infoWindow.open(mapInstanceRef.current!, marker);
+          });
+
+          markersRef.current.push(marker);
+          markersCreated++;
+        }
+      }
+
+      setLocationError(`✅ Found ${markersCreated} places for "${textQuery}".`);
+    } catch (error) {
+      console.error('Text search error:', error);
+      setLocationError('Failed to search places. Please try again.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -651,6 +1487,218 @@ export const MapView: React.FC = () => {
         )}
       </div>
 
+      {/* Transit Instructions Display */}
+      {transitInstructions && (() => {
+        console.log('🎨 Rendering transit instructions:', transitInstructions);
+        return (
+          <div className="neuro-element p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-neuro-text flex items-center gap-2">
+                🚇 Transit Directions
+              </h3>
+            <button
+              onClick={() => {
+                setTransitInstructions(null);
+                setAllRoutes([]);
+                setSelectedRouteIndex(0);
+              }}
+              className="text-sm text-neuro-textLight hover:text-neuro-text"
+            >
+              ✕ Close
+            </button>
+          </div>
+
+          {/* Route Options Selector */}
+          {allRoutes.length > 1 && (
+            <div className="mb-4">
+              <p className="text-sm text-neuro-textLight mb-2">
+                {allRoutes.length} route options available
+              </p>
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {allRoutes.map((route, index) => {
+                  const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
+                  const duration = route.localizedValues?.duration?.text || route.duration;
+                  const isSelected = index === selectedRouteIndex;
+                  
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => switchToRoute(index)}
+                      className={`flex-shrink-0 px-4 py-3 rounded-lg border-2 transition-all ${
+                        isSelected
+                          ? 'border-neuro-accent bg-blue-50 shadow-md'
+                          : 'border-gray-200 hover:border-neuro-accent hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-left">
+                        <div className="font-semibold text-sm text-neuro-text">
+                          Route {index + 1}
+                        </div>
+                        <div className="text-xs text-neuro-textLight mt-1">
+                          {duration}
+                        </div>
+                        <div className="text-xs text-neuro-textLight">
+                          {distance}
+                        </div>
+                        {route.travelAdvisory?.transitFare && (
+                          <div className="text-xs text-green-600 mt-1 font-semibold">
+                            {route.travelAdvisory.transitFare.currencyCode} {route.travelAdvisory.transitFare.units}.
+                            {(route.travelAdvisory.transitFare.nanos / 1000000000).toFixed(2).split('.')[1]}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Route Summary */}
+          <div className="bg-blue-50 rounded-lg p-4 mb-4">
+            <div className="flex items-center justify-between text-sm">
+              <div>
+                <span className="font-semibold text-blue-900">Total Duration:</span>
+                <span className="ml-2 text-blue-700">{transitInstructions.totalDuration}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-blue-900">Distance:</span>
+                <span className="ml-2 text-blue-700">{transitInstructions.totalDistance}</span>
+              </div>
+              {transitInstructions.fare && (
+                <div>
+                  <span className="font-semibold text-blue-900">Fare:</span>
+                  <span className="ml-2 text-blue-700">
+                    {transitInstructions.fare.currencyCode} {transitInstructions.fare.units}.
+                    {(transitInstructions.fare.nanos / 1000000000).toFixed(2).split('.')[1]}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Step-by-Step Instructions */}
+          <div className="space-y-4">
+            {transitInstructions.steps.map((step: any, idx: number) => (
+              <div key={idx} className="flex gap-4">
+                {/* Step Number/Icon */}
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-neuro-accent text-white flex items-center justify-center font-bold">
+                  {step.index}
+                </div>
+
+                {/* Step Content */}
+                <div className="flex-1">
+                  {step.type === 'walk' ? (
+                    /* Walking Step */
+                    <div className="neuro-element-sm p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">🚶</span>
+                        <span className="font-semibold text-neuro-text">Walk</span>
+                        <span className="text-sm text-neuro-textLight">
+                          {step.distance} • {step.duration}
+                        </span>
+                      </div>
+                      <p className="text-sm text-neuro-textLight">{step.instruction}</p>
+                    </div>
+                  ) : (
+                    /* Transit Step */
+                    <div className="neuro-element-sm p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        {/* Transit Icon based on vehicle type */}
+                        <span className="text-2xl">
+                          {step.transitDetails.transitLine?.vehicle?.type === 'SUBWAY' && '🚇'}
+                          {step.transitDetails.transitLine?.vehicle?.type === 'BUS' && '🚌'}
+                          {step.transitDetails.transitLine?.vehicle?.type === 'TRAIN' && '🚂'}
+                          {step.transitDetails.transitLine?.vehicle?.type === 'LIGHT_RAIL' && '🚊'}
+                          {step.transitDetails.transitLine?.vehicle?.type === 'RAIL' && '🚆'}
+                          {!step.transitDetails.transitLine?.vehicle?.type && '🚌'}
+                        </span>
+                        
+                        {/* Transit Line Name */}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            {step.transitDetails.transitLine?.nameShort && (
+                              <span 
+                                className="px-2 py-1 rounded font-bold text-sm"
+                                style={{
+                                  backgroundColor: step.transitDetails.transitLine?.color || '#666',
+                                  color: step.transitDetails.transitLine?.textColor || '#FFF'
+                                }}
+                              >
+                                {step.transitDetails.transitLine.nameShort}
+                              </span>
+                            )}
+                            <span className="font-semibold text-neuro-text">
+                              {step.transitDetails.transitLine?.name || 'Transit'}
+                            </span>
+                          </div>
+                          {step.transitDetails.headsign && (
+                            <p className="text-sm text-neuro-textLight mt-1">
+                              towards {step.transitDetails.headsign}
+                            </p>
+                          )}
+                        </div>
+                        
+                        <div className="text-sm text-neuro-textLight">
+                          {step.duration}
+                        </div>
+                      </div>
+
+                      {/* Departure Info */}
+                      <div className="border-l-2 border-neuro-accent pl-4 space-y-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-green-600 font-bold">📍 Board</span>
+                            <span className="font-semibold text-neuro-text">
+                              {step.transitDetails.stopDetails?.departureStop?.name}
+                            </span>
+                          </div>
+                          {step.transitDetails.localizedValues?.departureTime && (
+                            <p className="text-sm text-neuro-textLight ml-6">
+                              Depart at {step.transitDetails.localizedValues.departureTime.time?.text}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Stop Count */}
+                        {step.transitDetails.stopCount && (
+                          <div className="text-sm text-neuro-textLight ml-6">
+                            {step.transitDetails.stopCount} stops ({step.distance})
+                          </div>
+                        )}
+
+                        {/* Arrival Info */}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-red-600 font-bold">📍 Exit</span>
+                            <span className="font-semibold text-neuro-text">
+                              {step.transitDetails.stopDetails?.arrivalStop?.name}
+                            </span>
+                          </div>
+                          {step.transitDetails.localizedValues?.arrivalTime && (
+                            <p className="text-sm text-neuro-textLight ml-6">
+                              Arrive at {step.transitDetails.localizedValues.arrivalTime.time?.text}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Transit Agency Info */}
+                      {step.transitDetails.transitLine?.agencies?.[0] && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-neuro-textLight">
+                          Operated by {step.transitDetails.transitLine.agencies[0].name}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        );
+      })()}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="neuro-element p-6">
           <h3 className="text-lg font-semibold text-neuro-text mb-4">Nearby Places</h3>
@@ -687,9 +1735,11 @@ export const MapView: React.FC = () => {
               onClick={() => {
                 markersRef.current.forEach(marker => marker.map = null);
                 markersRef.current = [];
-                if (directionsPolylineRef.current) {
-                  directionsPolylineRef.current.setMap(null);
-                }
+                directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
+                directionsPolylinesRef.current = [];
+                setTransitInstructions(null);
+                setAllRoutes([]);
+                setSelectedRouteIndex(0);
               }}
               className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
               disabled={isProcessing}

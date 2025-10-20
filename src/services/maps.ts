@@ -1,4 +1,5 @@
 import { Loader } from '@googlemaps/js-api-loader';
+import { configService } from './configService';
 import {
   computeRoutes,
   decodePolyline,
@@ -17,8 +18,6 @@ import {
   type Place
 } from './placesApi';
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-
 let loaderInstance: Loader | null = null;
 let isLoaded = false;
 
@@ -27,10 +26,11 @@ export interface Location {
   lng: number;
 }
 
-export const getGoogleMapsLoader = (): Loader => {
+export const getGoogleMapsLoader = async (): Promise<Loader> => {
   if (!loaderInstance) {
+    const apiKey = await configService.getGoogleMapsApiKey();
     loaderInstance = new Loader({
-      apiKey: GOOGLE_MAPS_API_KEY,
+      apiKey,
       version: 'weekly',
       libraries: ['places', 'geometry']
     });
@@ -43,7 +43,7 @@ export const loadGoogleMaps = async (): Promise<void> => {
     return;
   }
 
-  const loader = getGoogleMapsLoader();
+  const loader = await getGoogleMapsLoader();
   await loader.load();
   isLoaded = true;
 };

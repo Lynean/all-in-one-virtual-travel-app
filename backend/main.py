@@ -7,8 +7,19 @@ from typing import Dict, Any
 from config import settings
 from services.agent_service import AgentService
 from services.redis_service import RedisService
+from services.backend_places_service import (
+    get_places_service,
+    PlaceSearchRequest,
+    PlaceResult
+)
+from services.backend_routes_service import (
+    get_routes_service,
+    RouteRequest,
+    RouteResult
+)
 from models.requests import ChatRequest, SessionRequest
 from models.responses import ChatResponse, SessionResponse
+from routers import admin
 
 # Configure logging
 logging.basicConfig(
@@ -58,14 +69,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - MUST be before routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
+# Include admin router
+app.include_router(admin.router)
 
 
 @app.get("/")
@@ -84,8 +99,10 @@ async def root():
 async def health_check():
     """Detailed health check"""
     try:
+        from datetime import datetime
+        
         # Check Redis connection
-        redis_healthy = await redis_service.ping()
+        redis_healthy = await redis_service.ping() if redis_service else False
         
         return {
             "status": "healthy",
@@ -114,6 +131,8 @@ async def chat(request: ChatRequest):
     """
     try:
         logger.info(f"Chat request from user {request.user_id}, session {request.session_id}")
+        logger.info(f"Message received: '{request.message}'")
+        logger.info(f"Context: {request.context}")
         
         response = await agent_service.process_message(
             user_id=request.user_id,
@@ -216,9 +235,134 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
         await websocket.close(code=1011, reason=str(e))
 
 
+# ============================================================================
+# Map API Endpoints - Backend processes Google Maps API calls
+# ============================================================================
+
+@app.post("/api/maps/places/search")
+async def search_places(request: PlaceSearchRequest):
+    """
+    Search for places using Google Places API (server-side)
+    Frontend sends search parameters, backend calls Google API and returns results
+    
+    Args:
+        request: PlaceSearchRequest with query, location, filters
+    
+    Returns:
+        List of PlaceResult objects with place data
+    """
+    try:
+        places_service = get_places_service()
+        results = await places_service.search_text(request)
+        
+        return {
+            "results": [result.dict() for result in results],
+            "count": len(results)
+        }
+        
+    except Exception as e:
+        logger.error(f"Places search error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/maps/places/nearby")
+async def search_nearby_places(
+    latitude: float,
+    longitude: float,
+    radius: int = 5000,
+    types: str = None  # Comma-separated list
+):
+    """
+    Search for nearby places (server-side)
+    
+    Args:
+        latitude: Center latitude
+        longitude: Center longitude
+        radius: Search radius in meters (default 5000)
+        types: Comma-separated place types (optional)
+    
+    Returns:
+        List of nearby places
+    """
+    try:
+        places_service = get_places_service()
+        
+        included_types = types.split(",") if types else None
+        
+        results = await places_service.search_nearby(
+            latitude=latitude,
+            longitude=longitude,
+            radius=radius,
+            included_types=included_types
+        )
+        
+        return {
+            "results": [result.dict() for result in results],
+            "count": len(results)
+        }
+        
+    except Exception as e:
+        logger.error(f"Nearby search error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/maps/places/{place_id}")
+async def get_place_details(place_id: str):
+    """
+    Get detailed information about a specific place (server-side)
+    
+    Args:
+        place_id: Google Place ID
+    
+    Returns:
+        Detailed place information
+    """
+    try:
+        places_service = get_places_service()
+        details = await places_service.get_place_details(place_id)
+        
+        if not details:
+            raise HTTPException(status_code=404, detail="Place not found")
+        
+        return details
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Place details error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/maps/routes/compute")
+async def compute_routes(request: RouteRequest):
+    """
+    Compute routes using Google Routes API (server-side)
+    Frontend sends origin/destination, backend calls Google API and returns route data
+    
+    Args:
+        request: RouteRequest with origin, destination, waypoints, travel mode
+    
+    Returns:
+        RouteResult with legs, polyline, distance, duration
+    """
+    try:
+        routes_service = get_routes_service()
+        result = await routes_service.compute_routes(request)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="No route found")
+        
+        return result.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Routes compute error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
-    from datetime import datetime
     
     uvicorn.run(
         "main:app",

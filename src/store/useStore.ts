@@ -66,9 +66,14 @@ export const useStore = create<TravelStore>()(
       setDestination: (dest) => set({ destination: dest }),
       checklist: [],
       addChecklistItem: (item) =>
-        set((state) => ({
-          checklist: [...state.checklist, { ...item, id: `${Date.now()}-${Math.random()}` }],
-        })),
+        set((state) => {
+          const newItem = { ...item, id: `${Date.now()}-${Math.random()}` };
+          console.log('🔄 Store: Adding checklist item:', newItem);
+          console.log('🔄 Store: Current checklist length:', state.checklist.length);
+          const newChecklist = [...state.checklist, newItem];
+          console.log('🔄 Store: New checklist length:', newChecklist.length);
+          return { checklist: newChecklist };
+        }),
       toggleChecklistItem: (id) =>
         set((state) => {
           console.log('Toggling item with id:', id);
@@ -125,6 +130,7 @@ export const useStore = create<TravelStore>()(
         currentLocationName: state.currentLocationName,
         locationConfirmed: state.locationConfirmed,
         userProvidedLocation: state.userProvidedLocation,
+        checklist: state.checklist,  // Persist checklist items
       }),
     }
   )

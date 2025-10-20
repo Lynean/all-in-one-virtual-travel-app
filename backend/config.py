@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     
     # LLM Configuration
     primary_model: str = "gemini-2.5-flash"
-    max_tokens: int = 2000
+    max_tokens: int = 4000  # Increased for comprehensive checklists
     temperature: float = 0.7
     
     class Config:

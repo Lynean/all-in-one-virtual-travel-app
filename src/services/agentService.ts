@@ -23,10 +23,16 @@ export interface MapAction {
   };
 }
 
+export interface AppAction {
+  type: string;
+  data: any;
+}
+
 export interface AgentResponse {
   session_id: string;
   message: string;
   map_actions: MapAction[];
+  app_actions: AppAction[];  // Added app_actions field
   metadata?: {
     location_confirmed?: boolean;
   };

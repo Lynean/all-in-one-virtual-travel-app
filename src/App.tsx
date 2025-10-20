@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Checklist } from './components/Checklist';
 import { MapView } from './components/MapView';
-import { AIGuide } from './components/AIGuide';
 import { Emergency } from './components/Emergency';
+import { AdminPanel } from './components/AdminPanel';
 
 function App() {
   const [activeTab, setActiveTab] = useState('checklist');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   const getBackgroundClass = () => {
     switch (activeTab) {
@@ -15,8 +16,6 @@ function App() {
         return 'bg-neuro-checklist-bg';
       case 'map':
         return 'bg-neuro-map-bg';
-      case 'ai':
-        return 'bg-neuro-ai-bg';
       case 'emergency':
         return 'bg-neuro-emergency-bg';
       default:
@@ -31,16 +30,27 @@ function App() {
         setActiveTab={setActiveTab}
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
+        onAdminClick={() => setShowAdminPanel(true)}
       />
       
       <main className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-0 lg:ml-0' : 'ml-0'}`}>
         <div className="container mx-auto max-w-6xl p-4 lg:p-8">
-          {activeTab === 'checklist' && <Checklist />}
-          {activeTab === 'map' && <MapView />}
-          {activeTab === 'ai' && <AIGuide />}
-          {activeTab === 'emergency' && <Emergency />}
+          {/* Keep all components mounted but hide inactive ones to preserve state */}
+          <div style={{ display: activeTab === 'checklist' ? 'block' : 'none' }}>
+            <Checklist />
+          </div>
+          <div style={{ display: activeTab === 'map' ? 'block' : 'none' }}>
+            <MapView />
+          </div>
+          <div style={{ display: activeTab === 'emergency' ? 'block' : 'none' }}>
+            <Emergency />
+          </div>
         </div>
       </main>
+
+      {showAdminPanel && (
+        <AdminPanel onClose={() => setShowAdminPanel(false)} />
+      )}
     </div>
   );
 }

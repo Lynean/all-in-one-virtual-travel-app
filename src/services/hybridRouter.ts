@@ -10,6 +10,7 @@ import { agentService, AgentContext, AgentResponse } from './agentService';
 interface HybridResponse {
   message: string;
   mapActions: any[];
+  appActions?: any[];  // Added for checklist and other app actions
   source: 'langchain';
   searchResults?: any[];
   directionsInfo?: any;
@@ -87,6 +88,7 @@ export class HybridRouter {
     return {
       message: response.message,
       mapActions: response.map_actions,
+      appActions: response.app_actions,  // Pass app_actions from backend
       source: 'langchain',
     };
   }

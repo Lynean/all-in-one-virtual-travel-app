@@ -4,7 +4,17 @@
  * Documentation: https://developers.google.com/maps/documentation/places/web-service/overview
  */
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+import { configService } from './configService';
+
+let API_KEY: string | null = null;
+
+const getApiKey = async (): Promise<string> => {
+  if (!API_KEY) {
+    API_KEY = await configService.getGoogleMapsApiKey();
+  }
+  return API_KEY;
+};
+
 const PLACES_API_BASE_URL = 'https://places.googleapis.com/v1';
 
 export interface Location {
@@ -97,13 +107,14 @@ export const searchNearby = async (
   request: SearchNearbyRequest
 ): Promise<SearchNearbyResponse> => {
   try {
+    const apiKey = await getApiKey();
     const response = await fetch(
       `${PLACES_API_BASE_URL}/places:searchNearby`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
+          'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.types,places.primaryType,places.primaryTypeDisplayName,places.nationalPhoneNumber,places.businessStatus,places.priceLevel,places.websiteUri,places.regularOpeningHours,places.photos,places.viewport'
         },
         body: JSON.stringify({
@@ -137,13 +148,14 @@ export const searchText = async (
   request: SearchTextRequest
 ): Promise<SearchTextResponse> => {
   try {
+    const apiKey = await getApiKey();
     const response = await fetch(
       `${PLACES_API_BASE_URL}/places:searchText`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
+          'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.types,places.primaryType,places.primaryTypeDisplayName,places.nationalPhoneNumber,places.businessStatus,places.priceLevel,places.websiteUri,places.regularOpeningHours,places.photos,places.viewport'
         },
         body: JSON.stringify({
@@ -171,13 +183,14 @@ export const searchText = async (
 /**
  * Get a photo URL from a Place photo resource
  */
-export const getPhotoUrl = (
+export const getPhotoUrl = async (
   photoName: string,
   maxWidth?: number,
   maxHeight?: number
-): string => {
+): Promise<string> => {
+  const apiKey = await getApiKey();
   const params = new URLSearchParams({
-    key: API_KEY
+    key: apiKey
   });
   
   if (maxWidth) params.append('maxWidthPx', maxWidth.toString());
@@ -319,12 +332,13 @@ export const convertLegacyPlaceType = (legacyType: string): string => {
  */
 export const getPlaceDetails = async (placeId: string): Promise<Place> => {
   try {
+    const apiKey = await getApiKey();
     const response = await fetch(
       `${PLACES_API_BASE_URL}/places/${placeId}`,
       {
         method: 'GET',
         headers: {
-          'X-Goog-Api-Key': API_KEY,
+          'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,rating,userRatingCount,types,primaryType,primaryTypeDisplayName,nationalPhoneNumber,internationalPhoneNumber,businessStatus,priceLevel,websiteUri,regularOpeningHours,photos,viewport'
         }
       }

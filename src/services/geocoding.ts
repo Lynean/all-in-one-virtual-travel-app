@@ -1,4 +1,13 @@
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+import { configService } from './configService';
+
+let API_KEY: string | null = null;
+
+const getApiKey = async (): Promise<string> => {
+  if (!API_KEY) {
+    API_KEY = await configService.getGoogleMapsApiKey();
+  }
+  return API_KEY;
+};
 
 export interface LocationName {
   formattedAddress: string;
@@ -12,13 +21,9 @@ export async function reverseGeocode(
   lat: number,
   lng: number
 ): Promise<LocationName | null> {
-  if (!API_KEY || API_KEY === 'undefined') {
-    console.error('Google Maps API key not found');
-    return null;
-  }
-
   try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${API_KEY}`;
+    const apiKey = await getApiKey();
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
     const response = await fetch(url);
     
     if (!response.ok) {
@@ -78,13 +83,9 @@ export async function reverseGeocode(
 }
 
 export async function forwardGeocode(address: string): Promise<LocationName | null> {
-  if (!API_KEY || API_KEY === 'undefined') {
-    console.error('Google Maps API key not found');
-    return null;
-  }
-
   try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${API_KEY}`;
+    const apiKey = await getApiKey();
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
     const response = await fetch(url);
     
     if (!response.ok) {

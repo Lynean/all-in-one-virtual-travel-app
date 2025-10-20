@@ -4,7 +4,17 @@
  * Documentation: https://developers.google.com/maps/documentation/routes
  */
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+import { configService } from './configService';
+
+let API_KEY: string | null = null;
+
+const getApiKey = async (): Promise<string> => {
+  if (!API_KEY) {
+    API_KEY = await configService.getGoogleMapsApiKey();
+  }
+  return API_KEY;
+};
+
 const ROUTES_API_BASE_URL = 'https://routes.googleapis.com';
 
 export interface Location {
@@ -38,6 +48,24 @@ export enum Units {
   IMPERIAL = 'IMPERIAL'
 }
 
+export enum TransitMode {
+  BUS = 'BUS',
+  SUBWAY = 'SUBWAY',
+  TRAIN = 'TRAIN',
+  LIGHT_RAIL = 'LIGHT_RAIL',
+  RAIL = 'RAIL'
+}
+
+export enum TransitRoutingPreference {
+  LESS_WALKING = 'LESS_WALKING',
+  FEWER_TRANSFERS = 'FEWER_TRANSFERS'
+}
+
+export interface TransitPreferences {
+  allowedTravelModes?: TransitMode[];
+  routingPreference?: TransitRoutingPreference;
+}
+
 export interface ComputeRoutesRequest {
   origin: Waypoint;
   destination: Waypoint;
@@ -47,12 +75,14 @@ export interface ComputeRoutesRequest {
   polylineQuality?: 'HIGH_QUALITY' | 'OVERVIEW';
   polylineEncoding?: 'ENCODED_POLYLINE' | 'GEO_JSON_LINESTRING';
   departureTime?: string;
+  arrivalTime?: string;
   computeAlternativeRoutes?: boolean;
   routeModifiers?: {
     avoidTolls?: boolean;
     avoidHighways?: boolean;
     avoidFerries?: boolean;
   };
+  transitPreferences?: TransitPreferences;
   languageCode?: string;
   units?: Units;
 }
@@ -166,38 +196,106 @@ export const computeRoutes = async (
   request: ComputeRoutesRequest
 ): Promise<ComputeRoutesResponse> => {
   try {
+    const apiKey = await getApiKey();
+    console.log('🔑 API Key exists:', !!apiKey, 'Length:', apiKey?.length);
+    const travelMode = request.travelMode || TravelMode.TRANSIT;
+    
+    // Build request body
+    const requestBody: any = {
+      origin: request.origin,
+      destination: request.destination,
+      travelMode: travelMode,
+      polylineQuality: request.polylineQuality || 'HIGH_QUALITY',
+      polylineEncoding: request.polylineEncoding || 'ENCODED_POLYLINE',
+      computeAlternativeRoutes: true, // Always compute alternative routes
+      languageCode: request.languageCode || 'en-US',
+      units: request.units || Units.METRIC
+    };
+    
+    // Handle transit-specific parameters
+    if (travelMode === TravelMode.TRANSIT) {
+      // Transit supports transitPreferences instead of routingPreference
+      if (request.transitPreferences) {
+        requestBody.transitPreferences = request.transitPreferences;
+      }
+      
+      // Transit supports arrivalTime or departureTime (but not both)
+      if (request.arrivalTime) {
+        requestBody.arrivalTime = request.arrivalTime;
+      } else if (request.departureTime) {
+        requestBody.departureTime = request.departureTime;
+      }
+      
+      // Transit does NOT support intermediates or routeModifiers
+      // (those are only for non-transit modes)
+    } else {
+      // Non-transit modes
+      requestBody.intermediates = request.intermediates;
+      requestBody.departureTime = request.departureTime;
+      requestBody.routeModifiers = request.routeModifiers;
+      requestBody.routingPreference = request.routingPreference || RoutingPreference.TRAFFIC_AWARE;
+    }
+    
+    // Build field mask - include transit details for transit mode
+    // Build field mask based on travel mode
+    let fieldMask = 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs,routes.viewport,routes.localizedValues,routes.description,routes.staticDuration';
+    
+    if (travelMode === TravelMode.TRANSIT) {
+      // Add comprehensive transit-specific fields
+      fieldMask += ',routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration';
+      fieldMask += ',routes.legs.steps.polyline,routes.legs.steps.startLocation,routes.legs.steps.endLocation';
+      fieldMask += ',routes.legs.steps.travelMode,routes.legs.steps.navigationInstruction';
+      fieldMask += ',routes.legs.steps.localizedValues';
+      fieldMask += ',routes.legs.steps.transitDetails.stopDetails';
+      fieldMask += ',routes.legs.steps.transitDetails.localizedValues';
+      fieldMask += ',routes.legs.steps.transitDetails.headsign';
+      fieldMask += ',routes.legs.steps.transitDetails.transitLine';
+      fieldMask += ',routes.legs.steps.transitDetails.stopCount';
+      fieldMask += ',routes.travelAdvisory.transitFare';
+    }
+    
+    console.log('🗺️ Routes API Request:', {
+      travelMode,
+      fieldMask,
+      requestBody
+    });
+    
     const response = await fetch(
       `${ROUTES_API_BASE_URL}/directions/v2:computeRoutes`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs,routes.viewport,routes.localizedValues,routes.description'
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': fieldMask
         },
-        body: JSON.stringify({
-          origin: request.origin,
-          destination: request.destination,
-          intermediates: request.intermediates,
-          travelMode: request.travelMode || TravelMode.DRIVE,
-          routingPreference: request.routingPreference || RoutingPreference.TRAFFIC_AWARE,
-          polylineQuality: request.polylineQuality || 'HIGH_QUALITY',
-          polylineEncoding: request.polylineEncoding || 'ENCODED_POLYLINE',
-          departureTime: request.departureTime,
-          computeAlternativeRoutes: request.computeAlternativeRoutes || false,
-          routeModifiers: request.routeModifiers,
-          languageCode: request.languageCode || 'en-US',
-          units: request.units || Units.METRIC
-        })
+        body: JSON.stringify(requestBody)
       }
     );
 
+    console.log('🗺️ Routes API HTTP Status:', response.status, response.statusText);
+
     if (!response.ok) {
-      const errorData = await response.json();
+      const errorText = await response.text();
+      console.error('🗺️ Routes API Error Response:', errorText);
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        throw new Error(`Routes API HTTP ${response.status}: ${errorText}`);
+      }
       throw new Error(`Routes API error: ${errorData.error?.message || response.statusText}`);
     }
 
-    return await response.json();
+    const responseData = await response.json();
+    console.log('🗺️ Routes API Response:', responseData);
+    
+    // Check if response has routes
+    if (!responseData.routes || responseData.routes.length === 0) {
+      console.warn('⚠️ Routes API returned empty routes array');
+    }
+    
+    return responseData;
   } catch (error) {
     console.error('Error computing routes:', error);
     throw error;
@@ -212,21 +310,31 @@ export const computeRouteMatrix = async (
   request: ComputeRouteMatrixRequest
 ): Promise<ComputeRouteMatrixResponse> => {
   try {
+    const apiKey = await getApiKey();
+    const travelMode = request.travelMode || TravelMode.TRANSIT;
+    
+    // Build request body
+    const requestBody: any = {
+      origins: request.origins,
+      destinations: request.destinations,
+      travelMode: travelMode
+    };
+    
+    // Only add routingPreference for non-TRANSIT modes
+    if (travelMode !== TravelMode.TRANSIT) {
+      requestBody.routingPreference = request.routingPreference || RoutingPreference.TRAFFIC_AWARE;
+    }
+    
     const response = await fetch(
       `${ROUTES_API_BASE_URL}/distanceMatrix/v2:computeRouteMatrix`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
+          'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,status,condition,localizedValues'
         },
-        body: JSON.stringify({
-          origins: request.origins,
-          destinations: request.destinations,
-          travelMode: request.travelMode || TravelMode.DRIVE,
-          routingPreference: request.routingPreference || RoutingPreference.TRAFFIC_AWARE
-        })
+        body: JSON.stringify(requestBody)
       }
     );
 
@@ -316,6 +424,6 @@ export const convertTravelMode = (oldMode: google.maps.TravelMode): TravelMode =
     case google.maps.TravelMode.TRANSIT:
       return TravelMode.TRANSIT;
     default:
-      return TravelMode.DRIVE;
+      return TravelMode.TRANSIT;
   }
 };
