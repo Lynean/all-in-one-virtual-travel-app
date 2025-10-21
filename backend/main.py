@@ -56,8 +56,6 @@ async def lifespan(app: FastAPI):
         await redis_service.connect()
         logger.info("✅ Redis connected successfully")
     except Exception as e:
-        logger.warning(f"⚠️  Redis connection failed: {e}")
-        logger.warning("⚠️  Running without Redis (sessions will use in-memory storage)")
         redis_service = None
     
     # Initialize Agent Service with Gemini
@@ -66,7 +64,7 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Gemini agent service initialized")
         logger.info(f"🤖 Using model: {settings.primary_model}")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize agent service: {e}")
+        logger.info(f"Failed to initialize agent service: {e}")
         raise
     
     yield
@@ -87,7 +85,6 @@ app = FastAPI(
 # Add validation error handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    logger.error(f"Validation error on {request.method} {request.url}: {exc}")
     return JSONResponse(
         status_code=422,
         content={
@@ -138,7 +135,7 @@ async def get_google_maps_config():
             maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
             logger.info(f"Redis: Maps API key {'found' if maps_api_key else 'not found'}")
         else:
-            logger.warning("Redis service not available, checking environment variables...")
+            logger.info("Redis service not available, checking environment variables...")
         
         # Fallback to environment variables if Redis fails
         if not maps_api_key:
@@ -147,7 +144,6 @@ async def get_google_maps_config():
             logger.info(f"Environment: Maps API key {'found' if maps_api_key else 'not found'}")
         
         if not maps_api_key:
-            logger.error("Google Maps API key not found in Redis or environment variables")
             raise HTTPException(
                 status_code=503, 
                 detail="Google Maps API key not configured. Please check Redis connection or environment variables."
@@ -165,7 +161,6 @@ async def get_google_maps_config():
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving Google Maps config: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve Google Maps configuration: {str(e)}")
 
 
