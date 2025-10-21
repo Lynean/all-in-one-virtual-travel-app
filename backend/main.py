@@ -565,13 +565,18 @@ if __name__ == "__main__":
     import os
     
     # Railway provides PORT environment variable
-    port = int(os.getenv("PORT", 8000))
+    try:
+        port = int(os.getenv("PORT", "8000"))
+    except (ValueError, TypeError):
+        port = 8000
+    
     logger.info(f"🚀 Starting server on port {port}")
+    logger.info(f"🔧 PORT environment variable: {os.getenv('PORT', 'not set')}")
     
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=settings.environment == "development",
+        reload=False,  # Disable reload in production
         log_level="info"
     )
