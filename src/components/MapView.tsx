@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Navigation, MapPin, Loader2, Bot } from 'lucide-react';
+import { Navigation, MapPin, Loader2, Map as MapIcon, Zap, Globe, Compass, Bus, Train, Coffee, Hotel, ShoppingBag, Camera, X, ChevronRight } from 'lucide-react';
 import { loadGoogleMapsScript, createMap, createMarker, createInfoWindow, MapLocation } from '../utils/googleMaps';
 import { hybridRouter } from '../services/hybridRouter';
 import { useStore } from '../store/useStore';
@@ -8,7 +8,6 @@ import { searchNearby, searchText, convertLegacyPlaceType, latLngToLocation as p
 import { configService } from '../services/configService';
 
 export const MapView: React.FC = () => {
-  const [searchQuery, setSearchQuery] = useState('');
   const [userLocation, setUserLocation] = useState<MapLocation | null>(null);
   const [locationError, setLocationError] = useState<string>('');
   const [isMapLoading, setIsMapLoading] = useState(true);
@@ -19,17 +18,17 @@ export const MapView: React.FC = () => {
   const [allRoutes, setAllRoutes] = useState<any[]>([]);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   
-  const mapRef = useRef<HTMLDivElement>(null);
+  // Use a ref callback to create the map container outside React's control
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
-  const userMarkerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  const markersRef = useRef<any[]>([]);
+  const userMarkerRef = useRef<any>(null);
   const directionsPolylinesRef = useRef<google.maps.Polyline[]>([]);
   
-  // Cache for geocoding results to prevent duplicate API calls
   const geocodeCache = useRef<Map<string, MapLocation>>(new Map());
   const pendingGeocodeRequests = useRef<Set<string>>(new Set());
   const lastGeocodingTime = useRef<number>(0);
-  const GEOCODING_RATE_LIMIT = 200; // Minimum ms between geocoding requests
+  const GEOCODING_RATE_LIMIT = 200;
 
   const { 
     destination, 
@@ -39,9 +38,8 @@ export const MapView: React.FC = () => {
     setMapInstance 
   } = useStore();
 
-  // Helper function: Calculate distance between two points (Haversine formula)
   const calculateDistance = (point1: { lat: number; lng: number }, point2: { lat: number; lng: number }): number => {
-    const R = 6371e3; // Earth's radius in meters
+    const R = 6371e3;
     const φ1 = (point1.lat * Math.PI) / 180;
     const φ2 = (point2.lat * Math.PI) / 180;
     const Δφ = ((point2.lat - point1.lat) * Math.PI) / 180;
@@ -52,20 +50,46 @@ export const MapView: React.FC = () => {
       Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    return R * c; // Distance in meters
+    return R * c;
   };
 
-  // Step 1: Load Google Maps Script
+  // Cleanup function for all map elements
+  const cleanupMapElements = () => {
+    try {
+      // Clean up polylines
+      directionsPolylinesRef.current.forEach(polyline => {
+        polyline?.setMap?.(null);
+      });
+      directionsPolylinesRef.current = [];
+
+      // Clean up markers
+      markersRef.current.forEach(marker => {
+        marker?.setMap?.(null);
+      });
+      markersRef.current = [];
+
+      // Clean up user marker
+      if (userMarkerRef.current) {
+        userMarkerRef.current?.setMap?.(null);
+        userMarkerRef.current = null;
+      }
+
+      // Clear map instance - let Google Maps handle DOM cleanup
+      if (mapInstanceRef.current) {
+        google.maps.event.clearInstanceListeners(mapInstanceRef.current);
+        mapInstanceRef.current = null;
+      }
+    } catch (e) {
+      console.error('Cleanup error:', e);
+    }
+  };
+
+  // Load Google Maps Script
   useEffect(() => {
     const loadScript = async () => {
-      console.log('🗺️ Loading Google Maps script...');
-      
       try {
-        // Get API key from config service (tries backend first, falls back to env)
         const apiKey = await configService.getGoogleMapsApiKey();
-        
-        console.log('API Key retrieved:', !!apiKey);
-        
+
         if (!apiKey || apiKey === 'undefined') {
           const errorMsg = 'Google Maps API key not configured. Please configure it in the admin panel or add VITE_GOOGLE_MAPS_API_KEY to your .env file.';
           console.error('❌', errorMsg);
@@ -74,8 +98,7 @@ export const MapView: React.FC = () => {
           return;
         }
 
-        await loadGoogleMapsScript({ apiKey, libraries: ['places', 'geometry', 'marker'] });
-        console.log('✅ Google Maps script loaded');
+        await loadGoogleMapsScript({ apiKey, libraries: ['places', 'geometry'] });
         setIsScriptLoaded(true);
       } catch (error) {
         console.error('❌ Failed to load Google Maps:', error);
@@ -87,95 +110,51 @@ export const MapView: React.FC = () => {
     loadScript();
   }, []);
 
-  // Step 2: Create Map Instance when both script and ref are ready
+  // Initialize Map - using ref callback pattern
   useEffect(() => {
-    console.log('📍 Map creation effect triggered', {
-      isScriptLoaded,
-      hasMapRef: !!mapRef.current,
-      hasMapInstance: !!mapInstanceRef.current
-    });
-
-    if (!isScriptLoaded) {
-      console.log('⏳ Waiting for script to load...');
+    if (!isScriptLoaded || !mapContainerRef.current || mapInstanceRef.current) {
       return;
     }
 
-    if (!mapRef.current) {
-      console.log('⏳ Waiting for map ref...');
-      // Retry after a short delay
-      const timer = setTimeout(() => {
-        if (mapRef.current && !mapInstanceRef.current) {
-          console.log('🔄 Retrying map creation...');
-          setIsScriptLoaded(prev => prev); // Trigger re-render
-        }
-      }, 100);
-      return () => clearTimeout(timer);
-    }
+    let isMounted = true;
 
-    if (mapInstanceRef.current) {
-      console.log('ℹ️ Map instance already exists');
-      return;
-    }
-
-    console.log('🗺️ Creating map instance...');
-    
     const initializeMap = async () => {
       try {
+        if (!isMounted) return;
+
         const defaultCenter = { lat: 40.7128, lng: -74.0060 };
         
-        // Get Map ID from config service
-        const mapId = await configService.getGoogleMapsMapId().catch(() => {
-          console.warn('Map ID not configured, using default');
-          return undefined;
-        });
-        
-        console.log('Map ID:', mapId || 'not set');
-        
-        mapInstanceRef.current = createMap(mapRef.current!, defaultCenter, 13, mapId);
+        const mapId = await configService.getGoogleMapsMapId().catch(() => undefined);
+
+        if (!isMounted) return;
+
+        // Create map instance
+        mapInstanceRef.current = createMap(mapContainerRef.current!, defaultCenter, 13, mapId);
         setMapInstance(mapInstanceRef.current);
         setIsMapLoading(false);
-        console.log('✅ Map instance created and stored');
       } catch (error) {
-        console.error('❌ Failed to create map:', error);
-        setMapError(`Failed to create map: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setIsMapLoading(false);
+        if (isMounted) {
+          console.error('❌ Failed to create map:', error);
+          setMapError(`Failed to create map: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          setIsMapLoading(false);
+        }
       }
     };
 
     initializeMap();
+
+    // Cleanup on unmount
+    return () => {
+      isMounted = false;
+      // Clean up immediately, before React tries to remove the DOM
+      cleanupMapElements();
+    };
   }, [isScriptLoaded, setMapInstance]);
 
-  // Helper function to create a blue dot marker for user location
   const createUserLocationMarker = async (map: google.maps.Map, location: MapLocation) => {
     try {
-      // Create a blue dot SVG icon
-      const blueDotIcon = {
-        path: google.maps.SymbolPath.CIRCLE,
-        fillColor: '#4285F4',
-        fillOpacity: 1,
-        strokeColor: '#FFFFFF',
-        strokeWeight: 3,
-        scale: 10,
-      };
-
-      // Create the marker using AdvancedMarkerElement with a custom HTML element
-      const markerContent = document.createElement('div');
-      markerContent.style.width = '20px';
-      markerContent.style.height = '20px';
-      markerContent.style.borderRadius = '50%';
-      markerContent.style.backgroundColor = '#4285F4';
-      markerContent.style.border = '3px solid #FFFFFF';
-      markerContent.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-      markerContent.style.cursor = 'pointer';
-
-      const { AdvancedMarkerElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
-      
-      const marker = new AdvancedMarkerElement({
-        map,
-        position: location,
-        content: markerContent,
-        title: 'Your Location'
-      });
+      // Use regular createMarker - no custom DOM, no React conflicts
+      const marker = await createMarker(map, location, 'Your Location');
 
       const infoWindow = createInfoWindow('<strong>You are here</strong>');
       marker.addListener('click', () => {
@@ -189,31 +168,24 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Function to recalibrate user location to new coordinates
   const recalibrateUserLocation = async (newLocation: MapLocation, recenterMap: boolean = true, zoomLevel?: number) => {
     try {
       setUserLocation(newLocation);
       setCurrentLocation(newLocation);
 
       if (mapInstanceRef.current) {
-        // Update existing marker position or create new one
         if (userMarkerRef.current) {
-          // Update existing marker position
-          userMarkerRef.current.position = newLocation;
+          userMarkerRef.current.setPosition(newLocation);
         } else {
-          // Create new marker if it doesn't exist
           userMarkerRef.current = await createUserLocationMarker(mapInstanceRef.current, newLocation);
         }
 
-        // Optionally recenter the map to the new location
         if (recenterMap) {
           mapInstanceRef.current.setCenter(newLocation);
           if (zoomLevel) {
             mapInstanceRef.current.setZoom(zoomLevel);
           }
         }
-
-        console.log('✅ User location recalibrated to:', newLocation);
       }
     } catch (error) {
       console.error('Failed to recalibrate user location:', error);
@@ -221,156 +193,60 @@ export const MapView: React.FC = () => {
     }
   };
 
+  // Get User Location
   useEffect(() => {
-    if (navigator.geolocation && !isMapLoading) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const location = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          };
-          setUserLocation(location);
-          setCurrentLocation(location);
+    if (!navigator.geolocation || isMapLoading) return;
 
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.setCenter(location);
-            mapInstanceRef.current.setZoom(15);
+    let isMounted = true;
 
-            if (userMarkerRef.current) {
-              userMarkerRef.current.map = null;
-            }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        // Check if component is still mounted and visible
+        if (!isMounted || !mapContainerRef.current) return;
 
-            try {
-              userMarkerRef.current = await createUserLocationMarker(mapInstanceRef.current, location);
-            } catch (error) {
-              console.error('Failed to create user marker:', error);
-            }
+        const location = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setUserLocation(location);
+        setCurrentLocation(location);
+
+        if (mapInstanceRef.current && isMounted) {
+          mapInstanceRef.current.setCenter(location);
+          mapInstanceRef.current.setZoom(15);
+
+          if (userMarkerRef.current) {
+            userMarkerRef.current.setMap(null);
           }
-        },
-        (error) => {
+
+          try {
+            if (isMounted) {
+              userMarkerRef.current = await createUserLocationMarker(mapInstanceRef.current, location);
+            }
+          } catch (error) {
+            console.error('Failed to create user marker:', error);
+          }
+        }
+      },
+      (error) => {
+        if (isMounted) {
           setLocationError('Unable to get your location. Please enable location services.');
           console.error('Geolocation error:', error);
         }
-      );
-    }
+      }
+    );
+
+    return () => {
+      isMounted = false;
+    };
   }, [isMapLoading, setCurrentLocation]);
-
-  const handleAISearch = async () => {
-    if (!searchQuery.trim()) return;
-
-    setIsProcessing(true);
-    setLocationError('');
-
-    try {
-      const response = await hybridRouter.routeQuery(
-        searchQuery,
-        destination,
-        currentLocation,
-        locationConfirmed
-      );
-
-      console.log('🎯 Agent response received:', response);
-      console.log('🎯 Map actions:', response.mapActions);
-      console.log('🎯 App actions:', response.appActions);
-
-      // Handle map actions from AI
-      if (response.mapActions && response.mapActions.length > 0) {
-        console.log(`🎯 Processing ${response.mapActions.length} map actions`);
-        for (const action of response.mapActions) {
-          await handleMapAction(action);
-        }
-      } else {
-        console.log('⚠️ No map actions received');
-      }
-
-      // Handle app actions (checklists, etc.)
-      if (response.appActions && response.appActions.length > 0) {
-        console.log('✅ App actions received in MapView:', response.appActions);
-        response.appActions.forEach((action: any) => {
-          if (action.type === 'checklist' && action.data) {
-            console.log('✅ Processing checklist action in MapView:', action.data);
-            const checklistData = action.data;
-            
-            let totalItems = 0;
-            
-            // Handle new categorized format
-            if (checklistData.categories && Array.isArray(checklistData.categories)) {
-              console.log(`✅ Processing categorized checklist with ${checklistData.categories.length} categories`);
-              checklistData.categories.forEach((categoryObj: any) => {
-                const categoryKey = categoryObj.category
-                  .toLowerCase()
-                  .replace(/\s+/g, '_')
-                  .replace(/[^a-z0-9_]/g, '');
-                
-                if (categoryObj.items && Array.isArray(categoryObj.items)) {
-                  console.log(`  Category "${categoryObj.category}": ${categoryObj.items.length} items`);
-                  categoryObj.items.forEach((item: any) => {
-                    useStore.getState().addChecklistItem({
-                      text: item.text,
-                      completed: item.checked || false,
-                      category: categoryKey
-                    });
-                    totalItems++;
-                  });
-                }
-              });
-              setLocationError(`✅ Added ${totalItems} items across ${checklistData.categories.length} categories to your checklist: "${checklistData.title}". Check the Checklist tab!`);
-            }
-            // Handle old flat format
-            else if (checklistData.items && Array.isArray(checklistData.items)) {
-              console.log(`✅ Adding ${checklistData.items.length} checklist items (flat format) to store from MapView`);
-              checklistData.items.forEach((item: any, index: number) => {
-                const category = mapPriorityToCategory(item.priority);
-                console.log(`  Item ${index + 1}: "${item.text}" (category: ${category})`);
-                useStore.getState().addChecklistItem({
-                  text: item.text,
-                  completed: item.checked || false,
-                  category: category
-                });
-              });
-              console.log('✅ All items added to store from MapView');
-              setLocationError(`✅ Added ${checklistData.items.length} items to your checklist: "${checklistData.title}". Check the Checklist tab!`);
-            }
-          }
-        });
-      }
-
-      // Show AI response if no app actions
-      if (response.message && (!response.appActions || response.appActions.length === 0)) {
-        setLocationError(response.message);
-      }
-    } catch (error) {
-      console.error('AI search error:', error);
-      setLocationError('Failed to process your request. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Helper function to map priority to category (same as AIGuide)
-  const mapPriorityToCategory = (priority: string): 'before' | 'arrival' | 'during' | 'departure' => {
-    switch (priority?.toLowerCase()) {
-      case 'high':
-        return 'before';
-      case 'medium':
-        return 'during';
-      case 'low':
-        return 'departure';
-      default:
-        return 'during';
-    }
-  };
 
   const handleMapAction = async (action: any) => {
     if (!mapInstanceRef.current) return;
 
-    console.log('🎯 Handling map action:', action.type, action.data);
-
     switch (action.type) {
       case 'search':
-        // New format: textQuery with optional parameters
         if (action.data.textQuery) {
-          console.log('🔍 Using Places Text Search API:', action.data.textQuery);
           await performTextSearch(
             action.data.textQuery,
             action.data.locationBias,
@@ -382,9 +258,7 @@ export const MapView: React.FC = () => {
             action.data.geocodeLocation,
             action.data.radius
           );
-        }
-        // Legacy format: query with coordinates
-        else if (action.data.query) {
+        } else if (action.data.query) {
           if (action.data.latitude && action.data.longitude) {
             await performNearbySearch(
               action.data.query,
@@ -395,7 +269,6 @@ export const MapView: React.FC = () => {
               action.data.openNow
             );
           } else {
-            // Otherwise do geocoding search
             await performSearch(action.data.query);
           }
         }
@@ -411,7 +284,7 @@ export const MapView: React.FC = () => {
         }
         break;
       case 'directions':
-      case 'route':  // Support both 'directions' and 'route' type
+      case 'route':
         if (action.data.origin && action.data.destination) {
           await showDirectionsFromAgent(
             action.data.origin, 
@@ -423,7 +296,6 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Helper to parse coordinate string "lat,lng" to MapLocation
   const parseCoordinateString = (coordStr: string): MapLocation | null => {
     try {
       const parts = coordStr.split(',');
@@ -440,37 +312,28 @@ export const MapView: React.FC = () => {
     return null;
   };
 
-  // Helper to geocode an address to coordinates (with caching and rate limiting)
   const geocodeAddress = async (address: string): Promise<MapLocation | null> => {
-    // Check cache first
     const cacheKey = address.toLowerCase().trim();
     if (geocodeCache.current.has(cacheKey)) {
-      console.log('📦 Using cached geocode result for:', address);
       return geocodeCache.current.get(cacheKey)!;
     }
 
-    // Check if request is already pending
     if (pendingGeocodeRequests.current.has(cacheKey)) {
-      console.log('⏳ Geocode request already pending for:', address);
-      // Wait a bit and check cache again
       await new Promise(resolve => setTimeout(resolve, 500));
       return geocodeCache.current.get(cacheKey) || null;
     }
 
-    // Rate limiting - wait if too soon since last request
     const now = Date.now();
     const timeSinceLastRequest = now - lastGeocodingTime.current;
     if (timeSinceLastRequest < GEOCODING_RATE_LIMIT) {
       const waitTime = GEOCODING_RATE_LIMIT - timeSinceLastRequest;
-      console.log(`⏱️ Rate limiting: waiting ${waitTime}ms before geocoding`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
     try {
       pendingGeocodeRequests.current.add(cacheKey);
       lastGeocodingTime.current = Date.now();
-      console.log('🌍 Geocoding address:', address);
-      
+
       const geocoder = new google.maps.Geocoder();
       const result = await geocoder.geocode({ address });
       
@@ -478,25 +341,17 @@ export const MapView: React.FC = () => {
         const location = result.results[0].geometry.location;
         const mapLocation = { lat: location.lat(), lng: location.lng() };
         
-        // Cache the result
         geocodeCache.current.set(cacheKey, mapLocation);
-        console.log('✅ Geocoded and cached:', address, '→', mapLocation);
-        
         return mapLocation;
       }
     } catch (e) {
       console.error('❌ Geocoding failed for:', address, e);
-      // If it's a quota error, increase the rate limit
-      if (e instanceof Error && e.message.includes('OVER_QUERY_LIMIT')) {
-        console.warn('⚠️ Geocoding quota exceeded. Consider implementing longer delays.');
-      }
     } finally {
       pendingGeocodeRequests.current.delete(cacheKey);
     }
     return null;
   };
 
-  // Show directions from agent (handles both coordinate strings and addresses)
   const showDirectionsFromAgent = async (
     origin: string | MapLocation,
     destination: string | MapLocation,
@@ -509,31 +364,21 @@ export const MapView: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      console.log('🗺️ showDirectionsFromAgent called');
-      console.log('  - origin:', origin, typeof origin);
-      console.log('  - destination:', destination, typeof destination);
-      console.log('  - travelMode:', travelMode);
 
-      // Parse origin
       let originLocation: MapLocation | null = null;
       if (typeof origin === 'string') {
-        // Try to parse as coordinates first
         originLocation = parseCoordinateString(origin);
         if (!originLocation) {
-          // Geocode as address
           originLocation = await geocodeAddress(origin);
         }
       } else {
         originLocation = origin;
       }
 
-      // Parse destination
       let destLocation: MapLocation | null = null;
       if (typeof destination === 'string') {
-        // Try to parse as coordinates first
         destLocation = parseCoordinateString(destination);
         if (!destLocation) {
-          // Geocode as address
           destLocation = await geocodeAddress(destination);
         }
       } else {
@@ -545,9 +390,6 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      console.log('✅ Resolved locations:', { originLocation, destLocation });
-
-      // Now call the original showDirections with resolved coordinates
       await showDirections(originLocation, destLocation, travelMode);
     } catch (error) {
       console.error('Error processing directions:', error);
@@ -557,34 +399,37 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Helper function to draw colored route segments for transit
   const drawColoredRouteSegments = (route: any) => {
-    // Clear existing polylines
-    directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
+    // Clean up existing polylines
+    directionsPolylinesRef.current.forEach(polyline => {
+      try {
+        polyline.setMap(null);
+      } catch (e) {
+        // Ignore
+      }
+    });
     directionsPolylinesRef.current = [];
 
-    if (!route.legs || route.legs.length === 0) return;
+    if (!route.legs || route.legs.length === 0 || !mapInstanceRef.current) return;
 
     const bounds = new google.maps.LatLngBounds();
     
     route.legs.forEach((leg: any) => {
       if (!leg.steps) return;
       
-      leg.steps.forEach((step: any, index: number) => {
+      leg.steps.forEach((step: any) => {
         if (!step.polyline?.encodedPolyline) return;
         
         const path = decodePolyline(step.polyline.encodedPolyline);
-        let strokeColor = '#666666'; // Default gray
+        let strokeColor = '#666666';
         let strokeWeight = 5;
         let zIndex = 1;
         
         if (step.travelMode === 'WALK') {
-          // Walking segments - dotted gray line
           strokeColor = '#888888';
           strokeWeight = 3;
-          zIndex = 0; // Lower z-index so transit lines appear on top
+          zIndex = 0;
         } else if (step.transitDetails) {
-          // Transit segments - use line color if available
           strokeColor = step.transitDetails.transitLine?.color || '#4F46E5';
           strokeWeight = 6;
           zIndex = 2;
@@ -616,7 +461,6 @@ export const MapView: React.FC = () => {
       });
     });
     
-    // Fit map to route bounds
     if (mapInstanceRef.current) {
       mapInstanceRef.current.fitBounds(bounds);
     }
@@ -632,15 +476,17 @@ export const MapView: React.FC = () => {
     try {
       setIsProcessing(true);
 
-      // Clear existing directions polylines
-      directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
+      // Clean up existing elements
+      directionsPolylinesRef.current.forEach(polyline => {
+        polyline?.setMap?.(null);
+      });
       directionsPolylinesRef.current = [];
 
-      // Clear existing markers
-      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current.forEach(marker => {
+        marker?.setMap?.(null);
+      });
       markersRef.current = [];
 
-      // Call Routes API
       const response = await computeRoutes({
         origin: {
           location: {
@@ -661,21 +507,14 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      // Store all routes and reset selection
       setAllRoutes(response.routes);
       setSelectedRouteIndex(0);
       
       const route = response.routes[0];
-      console.log('🗺️ Found', response.routes.length, 'route(s)');
-      console.log('🗺️ Route response:', route);
-      console.log('🚇 Travel mode:', travelMode);
-      console.log('🚇 Route legs:', route.legs);
 
-      // Draw route on map - use colored segments for transit, single line for others
       if (travelMode === 'TRANSIT') {
         drawColoredRouteSegments(route);
       } else if (route.polyline.encodedPolyline) {
-        // Non-transit: draw single colored polyline
         const path = decodePolyline(route.polyline.encodedPolyline);
         
         const polyline = new google.maps.Polyline({
@@ -689,35 +528,26 @@ export const MapView: React.FC = () => {
         
         directionsPolylinesRef.current.push(polyline);
 
-        // Fit map to route bounds
         const bounds = new google.maps.LatLngBounds();
         path.forEach(point => bounds.extend(point));
         mapInstanceRef.current.fitBounds(bounds);
       }
 
-      // Add markers for origin and destination
       const originMarker = await createMarker(mapInstanceRef.current, origin, 'Origin');
       const destMarker = await createMarker(mapInstanceRef.current, destination, 'Destination');
       
       markersRef.current.push(originMarker, destMarker);
 
-      // Show route info
       const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
       const duration = route.localizedValues?.duration?.text || route.duration;
       
-      // Extract transit instructions if travel mode is TRANSIT
       if (travelMode === 'TRANSIT' && route.legs && route.legs.length > 0) {
-        console.log('🚇 Processing TRANSIT mode');
         const leg = route.legs[0];
         const transitSteps: any[] = [];
-        
-        console.log('🚇 Leg steps:', leg.steps);
-        
+
         if (leg.steps) {
           leg.steps.forEach((step: any, index: number) => {
-            console.log(`🚇 Step ${index + 1}:`, step);
             if (step.transitDetails) {
-              // This is a transit step (bus, subway, train, etc.)
               transitSteps.push({
                 type: 'transit',
                 index: index + 1,
@@ -726,7 +556,6 @@ export const MapView: React.FC = () => {
                 duration: step.localizedValues?.staticDuration?.text || step.staticDuration
               });
             } else if (step.travelMode === 'WALK') {
-              // Walking step
               transitSteps.push({
                 type: 'walk',
                 index: index + 1,
@@ -737,19 +566,15 @@ export const MapView: React.FC = () => {
             }
           });
         }
-        
-        console.log('🚇 Transit steps collected:', transitSteps);
-        
+
         const transitData = {
           steps: transitSteps,
           totalDistance: distance,
           totalDuration: duration,
           fare: route.travelAdvisory?.transitFare
         };
-        
-        console.log('🚇 Setting transit instructions:', transitData);
+
         setTransitInstructions(transitData);
-        
         setLocationError(`Transit route found: ${distance}, ${duration}`);
       } else {
         setTransitInstructions(null);
@@ -763,17 +588,14 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Function to switch between alternative routes
   const switchToRoute = (routeIndex: number) => {
     if (!allRoutes || routeIndex >= allRoutes.length) return;
     
     setSelectedRouteIndex(routeIndex);
     const route = allRoutes[routeIndex];
     
-    // Draw route with colored segments
     drawColoredRouteSegments(route);
     
-    // Update transit instructions for the selected route
     const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
     const duration = route.localizedValues?.duration?.text || route.duration;
     
@@ -830,7 +652,9 @@ export const MapView: React.FC = () => {
         mapInstanceRef.current.setCenter(position);
         mapInstanceRef.current.setZoom(15);
 
-        markersRef.current.forEach(marker => marker.map = null);
+        markersRef.current.forEach(marker => {
+          marker?.setMap?.(null);
+        });
         markersRef.current = [];
 
         createMarker(mapInstanceRef.current, position, query).then(marker => {
@@ -856,7 +680,6 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Perform nearby search using Places API
   const performNearbySearch = async (
     query: string, 
     location: MapLocation, 
@@ -869,29 +692,25 @@ export const MapView: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      console.log('🔍 Performing nearby search:', { query, location, radius, priceLevel, minRating, openNow });
 
-      // Clear existing markers
-      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current.forEach(marker => {
+        marker?.setMap?.(null);
+      });
       markersRef.current = [];
 
-      // Normalize query
       let normalizedQuery = query.toLowerCase().trim();
       
-      // Check if query looks like a specific place name (has capital letters or specific words)
-      // Indicators of specific place: proper nouns, contains "on", "at", "near", street names
       const specificPlaceIndicators = [
-        /^[A-Z]/, // Starts with capital (proper noun)
+        /^[A-Z]/,
         /\b(on|at|near|street|road|avenue|lane|drive|blvd|boulevard)\b/i,
-        /\d+/, // Contains numbers (addresses)
-        query.split(' ').length >= 3, // 3+ words usually means specific place
+        /\d+/,
+        query.split(' ').length >= 3,
       ];
       
       const looksLikeSpecificPlace = specificPlaceIndicators.some(indicator => 
         typeof indicator === 'boolean' ? indicator : indicator.test(query)
       );
 
-      // Common PURE category keywords (not part of business names)
       const pureCategoryKeywords = [
         'restaurant', 'hotel', 'cafe', 'coffee', 'bar', 'pub',
         'attraction', 'museum', 'park', 'hospital', 'pharmacy',
@@ -899,19 +718,15 @@ export const MapView: React.FC = () => {
         'gym', 'spa', 'airport', 'train station', 'bus station'
       ];
 
-      // Check if query is EXACTLY a category (not a business name containing the word)
       const isPureCategory = pureCategoryKeywords.some(keyword => 
         normalizedQuery === keyword || normalizedQuery === keyword + 's'
       );
 
-      // Decide: specific place if it looks specific, OR if it's not a pure category
       const isCategory = isPureCategory && !looksLikeSpecificPlace;
 
       let response;
 
       if (!isCategory) {
-        // Specific place name - use Text Search
-        console.log('🔍 Using Text Search for specific place:', query);
         response = await searchText({
           textQuery: query,
           locationBias: {
@@ -923,15 +738,10 @@ export const MapView: React.FC = () => {
           maxResultCount: 20
         });
       } else {
-        // Category search - use Nearby Search with place types
-        console.log('🔍 Using Nearby Search for category:', query);
-        
-        // Remove 's' at end if plural
         if (normalizedQuery.endsWith('s')) {
           normalizedQuery = normalizedQuery.slice(0, -1);
         }
         
-        // Map common queries to place types
         const queryMap: Record<string, string> = {
           'restaurant': 'restaurant',
           'hotel': 'lodging',
@@ -957,7 +767,6 @@ export const MapView: React.FC = () => {
         };
 
         const placeType = queryMap[normalizedQuery] || convertLegacyPlaceType(normalizedQuery);
-        console.log('🔍 Using place type:', placeType);
 
         response = await searchNearby({
           locationRestriction: {
@@ -976,12 +785,8 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      console.log(`✅ Found ${response.places.length} places (before filtering)`);
-
-      // Client-side filtering (Google API doesn't support all filters server-side)
       let filteredPlaces = response.places;
 
-      // Filter by price level
       if (priceLevel) {
         const priceLevelMap: Record<string, string[]> = {
           'FREE': ['FREE'],
@@ -994,23 +799,18 @@ export const MapView: React.FC = () => {
         filteredPlaces = filteredPlaces.filter(place => 
           !place.priceLevel || allowedLevels.includes(place.priceLevel)
         );
-        console.log(`🔍 After price filter (${priceLevel}): ${filteredPlaces.length} places`);
       }
 
-      // Filter by minimum rating
       if (minRating) {
         filteredPlaces = filteredPlaces.filter(place => 
           place.rating && place.rating >= minRating
         );
-        console.log(`🔍 After rating filter (>=${minRating}): ${filteredPlaces.length} places`);
       }
 
-      // Filter by open now
       if (openNow) {
         filteredPlaces = filteredPlaces.filter(place => 
           place.regularOpeningHours?.openNow === true
         );
-        console.log(`🔍 After open_now filter: ${filteredPlaces.length} places`);
       }
 
       if (filteredPlaces.length === 0) {
@@ -1018,13 +818,9 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      console.log(`✅ Displaying ${filteredPlaces.length} places after filters`);
-
-      // Center map on search location
       mapInstanceRef.current.setCenter(location);
       mapInstanceRef.current.setZoom(14);
 
-      // Add markers for each filtered place
       let markersCreated = 0;
       for (const place of filteredPlaces) {
         if (place.location) {
@@ -1035,7 +831,6 @@ export const MapView: React.FC = () => {
             place.displayName?.text || 'Place'
           );
 
-          // Create info window with place details
           const infoContent = `
             <div style="padding: 8px; max-width: 200px;">
               <strong>${place.displayName?.text || 'Place'}</strong><br/>
@@ -1063,7 +858,6 @@ export const MapView: React.FC = () => {
     }
   };
 
-  // Perform text search using Places API (New) Text Search
   const performTextSearch = async (
     textQuery: string,
     locationBias?: any,
@@ -1079,27 +873,23 @@ export const MapView: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      console.log('🔍 Performing text search:', { textQuery, locationBias, priceLevels, minRating, openNow, includedType, needsGeocode, geocodeLocation });
 
-      // Clear existing markers
-      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current.forEach(marker => {
+        marker?.setMap?.(null);
+      });
       markersRef.current = [];
 
-      // If needsGeocode is true, geocode the location first
       let finalLocationBias = locationBias;
       let searchCenter: { lat: number; lng: number } | null = null;
       let searchRadius = radius || 5000;
       
       if (needsGeocode && geocodeLocation) {
-        console.log('🌍 Geocoding location:', geocodeLocation);
         const geocodedLocation = await geocodeAddress(geocodeLocation);
         
         if (geocodedLocation) {
-          console.log('✅ Geocoded to:', geocodedLocation);
           searchCenter = geocodedLocation;
           searchRadius = radius || 5000;
           
-          // Use locationRestriction instead of locationBias for hard boundary
           finalLocationBias = {
             circle: {
               center: {
@@ -1109,12 +899,8 @@ export const MapView: React.FC = () => {
               radius: searchRadius
             }
           };
-        } else {
-          console.warn('⚠️ Failed to geocode location, using textQuery as-is');
-          // Fall back to using textQuery without location bias
         }
       } else if (locationBias?.circle?.center) {
-        // Extract search center from existing locationBias
         searchCenter = {
           lat: locationBias.circle.center.latitude,
           lng: locationBias.circle.center.longitude
@@ -1122,14 +908,12 @@ export const MapView: React.FC = () => {
         searchRadius = locationBias.circle.radius || 5000;
       }
 
-      // Build request - use locationRestriction for hard boundary
       const request: any = {
         textQuery,
         maxResultCount: 20
       };
 
       if (finalLocationBias) {
-        // Use locationRestriction instead of locationBias to enforce radius
         request.locationRestriction = finalLocationBias;
       }
 
@@ -1149,8 +933,6 @@ export const MapView: React.FC = () => {
         request.includedType = includedType;
       }
 
-      console.log('📡 Text Search request:', request);
-
       const response = await searchText(request);
 
       if (!response.places || response.places.length === 0) {
@@ -1158,9 +940,6 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      console.log(`✅ Found ${response.places.length} places via Text Search`);
-
-      // Client-side filtering: Remove places outside the radius (backup enforcement)
       let filteredPlaces = response.places;
       if (searchCenter && searchRadius) {
         filteredPlaces = response.places.filter(place => {
@@ -1170,14 +949,8 @@ export const MapView: React.FC = () => {
           const distance = calculateDistance(searchCenter!, placeLocation);
           const isWithinRadius = distance <= searchRadius;
           
-          if (!isWithinRadius) {
-            console.log(`🚫 Filtered out: ${place.displayName?.text} (${distance.toFixed(0)}m > ${searchRadius}m)`);
-          }
-          
           return isWithinRadius;
         });
-        
-        console.log(`📍 Filtered: ${response.places.length} → ${filteredPlaces.length} places within ${searchRadius}m radius`);
       }
 
       if (filteredPlaces.length === 0) {
@@ -1185,7 +958,6 @@ export const MapView: React.FC = () => {
         return;
       }
 
-      // Center map on search center or first result
       if (searchCenter) {
         mapInstanceRef.current.setCenter(searchCenter);
         mapInstanceRef.current.setZoom(14);
@@ -1195,7 +967,6 @@ export const MapView: React.FC = () => {
         mapInstanceRef.current.setZoom(14);
       }
 
-      // Add markers for each filtered place
       let markersCreated = 0;
       for (const place of filteredPlaces) {
         if (place.location) {
@@ -1206,7 +977,6 @@ export const MapView: React.FC = () => {
             place.displayName?.text || 'Place'
           );
 
-          // Create info window with place details
           const infoContent = `
             <div style="padding: 8px; max-width: 200px;">
               <strong>${place.displayName?.text || 'Place'}</strong><br/>
@@ -1257,11 +1027,6 @@ export const MapView: React.FC = () => {
     }
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim() || !mapInstanceRef.current) return;
-    await performSearch(searchQuery);
-  };
-
   const handleNearbySearch = async (type: string) => {
     if (!mapInstanceRef.current || !userLocation) {
       setLocationError('Please enable location services to search nearby places.');
@@ -1271,11 +1036,11 @@ export const MapView: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      // Clear existing markers
-      markersRef.current.forEach(marker => marker.map = null);
+      markersRef.current.forEach(marker => {
+        marker?.setMap?.(null);
+      });
       markersRef.current = [];
 
-      // Use new Places API
       const response = await searchNearby({
         includedTypes: [convertLegacyPlaceType(type.toLowerCase())],
         maxResultCount: 10,
@@ -1289,8 +1054,6 @@ export const MapView: React.FC = () => {
       });
 
       if (response.places && response.places.length > 0) {
-        console.log(`Found ${response.places.length} places`);
-
         const markerPromises = response.places.map(async (place) => {
           if (place.location && mapInstanceRef.current) {
             const position = locationToLatLng(place.location);
@@ -1336,448 +1099,194 @@ export const MapView: React.FC = () => {
     }
   };
 
+  const nearbyPlaces = [
+    { type: 'restaurant', label: 'Restaurants', icon: Coffee, color: 'from-orange-500 to-red-600' },
+    { type: 'lodging', label: 'Hotels', icon: Hotel, color: 'from-blue-500 to-indigo-600' },
+    { type: 'tourist_attraction', label: 'Attractions', icon: Camera, color: 'from-purple-500 to-pink-600' },
+    { type: 'shopping_mall', label: 'Shopping', icon: ShoppingBag, color: 'from-green-500 to-emerald-600' },
+  ];
+
+  // Ref callback to create map container
+  const setMapContainerRef = (element: HTMLDivElement | null) => {
+    if (element && !mapContainerRef.current) {
+      mapContainerRef.current = element;
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="neuro-element p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-neuro-text">Explore Map</h2>
+      <div className="bg-white rounded-3xl p-6 shadow-lg border border-gray-100">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-2xl shadow-lg">
+              <Globe className="w-8 h-8 text-white" strokeWidth={2.5} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Interactive Map</h2>
+              <p className="text-sm text-gray-500 mt-1">Explore and navigate with AI guidance</p>
+            </div>
+          </div>
           {isProcessing && (
-            <div className="flex items-center gap-2 text-neuro-accent">
-              <Loader2 className="w-5 h-5 animate-spin" strokeWidth={2.5} />
-              <span className="text-sm font-medium">Processing...</span>
+            <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-xl">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" strokeWidth={2.5} />
+              <span className="text-sm font-medium text-blue-600">Processing...</span>
             </div>
           )}
         </div>
-        
-        <div className="flex gap-3 mb-4">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            placeholder="Search for places..."
-            className="flex-1 neuro-input px-4 py-3 text-neuro-text placeholder-neuro-textLight"
-            disabled={isProcessing}
-          />
-          <button
-            onClick={handleSearch}
-            className="neuro-button px-6 py-3 bg-gradient-to-br from-neuro-accent to-neuro-accentLight"
-            aria-label="Search"
-            disabled={isProcessing}
-          >
-            <Search className="w-5 h-5 text-white" strokeWidth={2.5} />
-          </button>
-        </div>
-
-        <button
-          onClick={handleAISearch}
-          className="w-full neuro-button p-3 bg-gradient-to-br from-purple-500 to-purple-600 text-white font-medium flex items-center justify-center gap-2 mb-6"
-          disabled={isProcessing}
-        >
-          <Bot className="w-5 h-5" strokeWidth={2.5} />
-          Ask AI to Search
-        </button>
 
         {locationError && (
-          <div className={`neuro-element-sm p-4 mb-6 ${
+          <div className={`rounded-2xl p-4 ${
             locationError.includes('Failed') || locationError.includes('Unable') 
-              ? 'bg-red-50' 
-              : 'bg-blue-50'
+              ? 'bg-red-50 border border-red-200' 
+              : locationError.includes('✅')
+              ? 'bg-green-50 border border-green-200'
+              : 'bg-blue-50 border border-blue-200'
           }`}>
-            <p className={`text-sm ${
+            <p className={`text-sm font-medium ${
               locationError.includes('Failed') || locationError.includes('Unable')
-                ? 'text-red-600'
-                : 'text-blue-600'
+                ? 'text-red-700'
+                : locationError.includes('✅')
+                ? 'text-green-700'
+                : 'text-blue-700'
             }`}>
               {locationError}
             </p>
           </div>
         )}
-
-        {userLocation && (
-          <div className="neuro-element-sm p-4 mb-6">
-            <div className="flex items-center gap-3 mb-3">
-              <Navigation className="w-5 h-5 text-neuro-accent" strokeWidth={2.5} />
-              <div className="flex-1">
-                <p className="text-sm text-neuro-textLight">Your Location</p>
-                <p className="text-sm font-semibold text-neuro-text">
-                  {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
-                </p>
-              </div>
-            </div>
-            
-            {/* Quick location presets */}
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => recalibrateUserLocation({ lat: 40.7128, lng: -74.0060 }, true, 13)}
-                className="text-xs neuro-button px-3 py-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                title="Recalibrate to New York"
-              >
-                📍 NYC
-              </button>
-              <button
-                onClick={() => recalibrateUserLocation({ lat: 51.5074, lng: -0.1278 }, true, 13)}
-                className="text-xs neuro-button px-3 py-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                title="Recalibrate to London"
-              >
-                📍 London
-              </button>
-              <button
-                onClick={() => recalibrateUserLocation({ lat: 35.6762, lng: 139.6503 }, true, 13)}
-                className="text-xs neuro-button px-3 py-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                title="Recalibrate to Tokyo"
-              >
-                📍 Tokyo
-              </button>
-              <button
-                onClick={() => {
-                  if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                      (position) => {
-                        recalibrateUserLocation(
-                          { lat: position.coords.latitude, lng: position.coords.longitude },
-                          true,
-                          15
-                        );
-                      },
-                      (error) => {
-                        console.error('Geolocation error:', error);
-                        setLocationError('Unable to get current GPS location');
-                      }
-                    );
-                  }
-                }}
-                className="text-xs neuro-button px-3 py-1.5 bg-gradient-to-br from-green-500 to-green-600 text-white"
-                title="Reset to current GPS location"
-              >
-                🎯 GPS
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className="neuro-element p-6 relative">
-        <div 
-          ref={mapRef} 
-          className="w-full h-[500px] rounded-2xl overflow-hidden"
-          style={{ minHeight: '500px' }}
-        />
-        
-        {/* Loading Overlay */}
+      {userLocation && (
+        <div className="bg-white rounded-3xl p-6 shadow-lg border border-gray-100">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl shadow-lg">
+              <Navigation className="w-6 h-6 text-white" strokeWidth={2.5} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-bold text-gray-900">Your Location</h3>
+              <p className="text-sm text-gray-500">Current position</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-xs text-gray-500 mb-1">Latitude</p>
+              <p className="text-sm font-mono text-gray-900">{userLocation.lat.toFixed(6)}°</p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-xs text-gray-500 mb-1">Longitude</p>
+              <p className="text-sm font-mono text-gray-900">{userLocation.lng.toFixed(6)}°</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
         {isMapLoading && (
-          <div className="absolute inset-0 bg-gradient-to-br from-neuro-accent/10 to-neuro-accentLight/10 rounded-2xl flex items-center justify-center m-6">
+          <div className="w-full flex items-center justify-center bg-gradient-to-br from-blue-50 via-cyan-50 to-teal-50" style={{ height: '600px' }}>
             <div className="text-center">
-              <Loader2 className="w-16 h-16 text-neuro-accent mx-auto mb-4 animate-spin" strokeWidth={1.5} />
-              <p className="text-neuro-textLight font-medium">Loading Google Maps...</p>
-              <p className="text-sm text-neuro-textLight mt-2">Initializing interactive map</p>
+              <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
+              <h3 className="text-gray-900 font-bold text-xl mb-2">Loading Map</h3>
+              <p className="text-gray-600 text-sm">Initializing your location...</p>
             </div>
           </div>
         )}
-        
-        {/* Error Overlay */}
-        {mapError && (
-          <div className="absolute inset-0 bg-gradient-to-br from-red-50 to-red-100 rounded-2xl flex items-center justify-center p-6 m-6">
-            <div className="text-center">
-              <MapPin className="w-16 h-16 text-red-500 mx-auto mb-4" strokeWidth={1.5} />
-              <p className="text-red-600 font-semibold mb-2">Map Loading Error</p>
-              <p className="text-sm text-red-500">{mapError}</p>
-            </div>
-          </div>
-        )}
+        {/* Map container - NO React children inside, Google Maps manages this DOM */}
+        <div
+          ref={setMapContainerRef}
+          className="w-full"
+          style={{ height: '600px', display: isMapLoading ? 'none' : 'block' }}
+        />
       </div>
 
-      {/* Transit Instructions Display */}
-      {transitInstructions && (() => {
-        console.log('🎨 Rendering transit instructions:', transitInstructions);
-        return (
-          <div className="neuro-element p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-neuro-text flex items-center gap-2">
-                🚇 Transit Directions
-              </h3>
-            <button
-              onClick={() => {
-                setTransitInstructions(null);
-                setAllRoutes([]);
-                setSelectedRouteIndex(0);
-              }}
-              className="text-sm text-neuro-textLight hover:text-neuro-text"
-            >
-              ✕ Close
-            </button>
-          </div>
-
-          {/* Route Options Selector */}
-          {allRoutes.length > 1 && (
-            <div className="mb-4">
-              <p className="text-sm text-neuro-textLight mb-2">
-                {allRoutes.length} route options available
-              </p>
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {allRoutes.map((route, index) => {
-                  const distance = route.localizedValues?.distance?.text || `${(route.distanceMeters / 1000).toFixed(1)} km`;
-                  const duration = route.localizedValues?.duration?.text || route.duration;
-                  const isSelected = index === selectedRouteIndex;
-                  
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => switchToRoute(index)}
-                      className={`flex-shrink-0 px-4 py-3 rounded-lg border-2 transition-all ${
-                        isSelected
-                          ? 'border-neuro-accent bg-blue-50 shadow-md'
-                          : 'border-gray-200 hover:border-neuro-accent hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="text-left">
-                        <div className="font-semibold text-sm text-neuro-text">
-                          Route {index + 1}
-                        </div>
-                        <div className="text-xs text-neuro-textLight mt-1">
-                          {duration}
-                        </div>
-                        <div className="text-xs text-neuro-textLight">
-                          {distance}
-                        </div>
-                        {route.travelAdvisory?.transitFare && (
-                          <div className="text-xs text-green-600 mt-1 font-semibold">
-                            {route.travelAdvisory.transitFare.currencyCode} {route.travelAdvisory.transitFare.units}.
-                            {(route.travelAdvisory.transitFare.nanos / 1000000000).toFixed(2).split('.')[1]}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+      {transitInstructions && (
+        <div className="bg-white rounded-3xl p-6 shadow-lg border border-gray-100">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl shadow-lg">
+              <Navigation className="w-6 h-6 text-white" strokeWidth={2.5} />
             </div>
-          )}
-
-          {/* Route Summary */}
-          <div className="bg-blue-50 rounded-lg p-4 mb-4">
-            <div className="flex items-center justify-between text-sm">
-              <div>
-                <span className="font-semibold text-blue-900">Total Duration:</span>
-                <span className="ml-2 text-blue-700">{transitInstructions.totalDuration}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-blue-900">Distance:</span>
-                <span className="ml-2 text-blue-700">{transitInstructions.totalDistance}</span>
-              </div>
-              {transitInstructions.fare && (
-                <div>
-                  <span className="font-semibold text-blue-900">Fare:</span>
-                  <span className="ml-2 text-blue-700">
-                    {transitInstructions.fare.currencyCode} {transitInstructions.fare.units}.
-                    {(transitInstructions.fare.nanos / 1000000000).toFixed(2).split('.')[1]}
-                  </span>
-                </div>
-              )}
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Transit Directions</h3>
+              <p className="text-sm text-gray-500">{transitInstructions.totalDistance} • {transitInstructions.totalDuration}</p>
             </div>
           </div>
 
-          {/* Step-by-Step Instructions */}
-          <div className="space-y-4">
-            {transitInstructions.steps.map((step: any, idx: number) => (
-              <div key={idx} className="flex gap-4">
-                {/* Step Number/Icon */}
-                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-neuro-accent text-white flex items-center justify-center font-bold">
-                  {step.index}
-                </div>
-
-                {/* Step Content */}
-                <div className="flex-1">
-                  {step.type === 'walk' ? (
-                    /* Walking Step */
-                    <div className="neuro-element-sm p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-2xl">🚶</span>
-                        <span className="font-semibold text-neuro-text">Walk</span>
-                        <span className="text-sm text-neuro-textLight">
-                          {step.distance} • {step.duration}
-                        </span>
-                      </div>
-                      <p className="text-sm text-neuro-textLight">{step.instruction}</p>
-                    </div>
-                  ) : (
-                    /* Transit Step */
-                    <div className="neuro-element-sm p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        {/* Transit Icon based on vehicle type */}
-                        <span className="text-2xl">
-                          {step.transitDetails.transitLine?.vehicle?.type === 'SUBWAY' && '🚇'}
-                          {step.transitDetails.transitLine?.vehicle?.type === 'BUS' && '🚌'}
-                          {step.transitDetails.transitLine?.vehicle?.type === 'TRAIN' && '🚂'}
-                          {step.transitDetails.transitLine?.vehicle?.type === 'LIGHT_RAIL' && '🚊'}
-                          {step.transitDetails.transitLine?.vehicle?.type === 'RAIL' && '🚆'}
-                          {!step.transitDetails.transitLine?.vehicle?.type && '🚌'}
-                        </span>
-                        
-                        {/* Transit Line Name */}
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            {step.transitDetails.transitLine?.nameShort && (
-                              <span 
-                                className="px-2 py-1 rounded font-bold text-sm"
-                                style={{
-                                  backgroundColor: step.transitDetails.transitLine?.color || '#666',
-                                  color: step.transitDetails.transitLine?.textColor || '#FFF'
-                                }}
-                              >
-                                {step.transitDetails.transitLine.nameShort}
-                              </span>
-                            )}
-                            <span className="font-semibold text-neuro-text">
-                              {step.transitDetails.transitLine?.name || 'Transit'}
-                            </span>
-                          </div>
-                          {step.transitDetails.headsign && (
-                            <p className="text-sm text-neuro-textLight mt-1">
-                              towards {step.transitDetails.headsign}
-                            </p>
-                          )}
-                        </div>
-                        
-                        <div className="text-sm text-neuro-textLight">
-                          {step.duration}
-                        </div>
-                      </div>
-
-                      {/* Departure Info */}
-                      <div className="border-l-2 border-neuro-accent pl-4 space-y-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-green-600 font-bold">📍 Board</span>
-                            <span className="font-semibold text-neuro-text">
-                              {step.transitDetails.stopDetails?.departureStop?.name}
-                            </span>
-                          </div>
-                          {step.transitDetails.localizedValues?.departureTime && (
-                            <p className="text-sm text-neuro-textLight ml-6">
-                              Depart at {step.transitDetails.localizedValues.departureTime.time?.text}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Stop Count */}
-                        {step.transitDetails.stopCount && (
-                          <div className="text-sm text-neuro-textLight ml-6">
-                            {step.transitDetails.stopCount} stops ({step.distance})
-                          </div>
-                        )}
-
-                        {/* Arrival Info */}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-red-600 font-bold">📍 Exit</span>
-                            <span className="font-semibold text-neuro-text">
-                              {step.transitDetails.stopDetails?.arrivalStop?.name}
-                            </span>
-                          </div>
-                          {step.transitDetails.localizedValues?.arrivalTime && (
-                            <p className="text-sm text-neuro-textLight ml-6">
-                              Arrive at {step.transitDetails.localizedValues.arrivalTime.time?.text}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Transit Agency Info */}
-                      {step.transitDetails.transitLine?.agencies?.[0] && (
-                        <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-neuro-textLight">
-                          Operated by {step.transitDetails.transitLine.agencies[0].name}
-                        </div>
+          <div className="space-y-3">
+            {transitInstructions.steps.map((step: any, index: number) => (
+              <div key={index} className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl">
+                {step.type === 'transit' ? (
+                  <>
+                    <div className="p-2 bg-blue-500 rounded-lg">
+                      {step.transitDetails.transitLine?.vehicle?.type === 'BUS' ? (
+                        <Bus className="w-5 h-5 text-white" />
+                      ) : (
+                        <Train className="w-5 h-5 text-white" />
                       )}
                     </div>
-                  )}
-                </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900">
+                        {step.transitDetails.transitLine?.name || 'Transit'}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {step.transitDetails.stopDetails?.departureStop?.name} → {step.transitDetails.stopDetails?.arrivalStop?.name}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {step.distance} • {step.duration}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="p-2 bg-gray-400 rounded-lg">
+                      <Navigation className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900">Walk</p>
+                      <p className="text-sm text-gray-600">{step.instruction}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {step.distance} • {step.duration}
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
-        </div>
-        );
-      })()}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="neuro-element p-6">
-          <h3 className="text-lg font-semibold text-neuro-text mb-4">Nearby Places</h3>
-          <div className="space-y-3">
-            {['restaurant', 'lodging', 'tourist_attraction', 'shopping_mall'].map((type, index) => (
+          {transitInstructions.fare && (
+            <div className="mt-4 p-3 bg-green-50 rounded-xl border border-green-200">
+              <p className="text-sm font-semibold text-green-900">
+                Estimated Fare: {transitInstructions.fare.text}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="bg-white rounded-3xl p-6 shadow-lg border border-gray-100">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl shadow-lg">
+            <Compass className="w-6 h-6 text-white" strokeWidth={2.5} />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Explore Nearby</h3>
+            <p className="text-sm text-gray-500">Quick access to popular places</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {nearbyPlaces.map((place) => {
+            const Icon = place.icon;
+            return (
               <button
-                key={type}
-                onClick={() => handleNearbySearch(type)}
-                className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
-                disabled={isProcessing}
+                key={place.type}
+                onClick={() => handleNearbySearch(place.type)}
+                disabled={!userLocation || isProcessing}
+                className={`group relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br ${place.color} text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
               >
-                {['Restaurants', 'Hotels', 'Attractions', 'Shopping'][index]}
+                <Icon className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" strokeWidth={2.5} />
+                <p className="text-sm font-semibold">{place.label}</p>
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="neuro-element p-6">
-          <h3 className="text-lg font-semibold text-neuro-text mb-4">Quick Actions</h3>
-          <div className="space-y-3">
-            <button
-              onClick={() => {
-                if (userLocation && mapInstanceRef.current) {
-                  mapInstanceRef.current.setCenter(userLocation);
-                  mapInstanceRef.current.setZoom(15);
-                }
-              }}
-              className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
-              disabled={isProcessing}
-            >
-              Center on My Location
-            </button>
-            <button
-              onClick={() => {
-                markersRef.current.forEach(marker => marker.map = null);
-                markersRef.current = [];
-                directionsPolylinesRef.current.forEach(polyline => polyline.setMap(null));
-                directionsPolylinesRef.current = [];
-                setTransitInstructions(null);
-                setAllRoutes([]);
-                setSelectedRouteIndex(0);
-              }}
-              className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
-              disabled={isProcessing}
-            >
-              Clear Markers & Directions
-            </button>
-            <button
-              onClick={() => {
-                if (mapInstanceRef.current) {
-                  mapInstanceRef.current.setMapTypeId(
-                    mapInstanceRef.current.getMapTypeId() === 'roadmap' ? 'satellite' : 'roadmap'
-                  );
-                }
-              }}
-              className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
-              disabled={isProcessing}
-            >
-              Toggle Map Type
-            </button>
-            <button
-              onClick={async () => {
-                if (userLocation) {
-                  // Example: Show directions to a nearby point (slightly offset from current location)
-                  const destLocation = {
-                    lat: userLocation.lat + 0.01,
-                    lng: userLocation.lng + 0.01
-                  };
-                  await showDirections(userLocation, destLocation);
-                } else {
-                  setLocationError('Please enable location services to get directions.');
-                }
-              }}
-              className="w-full neuro-button p-3 text-left text-neuro-text hover:scale-105 transition-transform"
-              disabled={isProcessing || !userLocation}
-            >
-              Get Directions (Routes API)
-            </button>
-          </div>
+            );
+          })}
         </div>
       </div>
     </div>

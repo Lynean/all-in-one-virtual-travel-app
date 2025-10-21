@@ -35,16 +35,10 @@ function App() {
       
       <main className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-0 lg:ml-0' : 'ml-0'}`}>
         <div className="container mx-auto max-w-6xl p-4 lg:p-8">
-          {/* Keep all components mounted but hide inactive ones to preserve state */}
-          <div style={{ display: activeTab === 'checklist' ? 'block' : 'none' }}>
-            <Checklist />
-          </div>
-          <div style={{ display: activeTab === 'map' ? 'block' : 'none' }}>
-            <MapView />
-          </div>
-          <div style={{ display: activeTab === 'emergency' ? 'block' : 'none' }}>
-            <Emergency />
-          </div>
+          {/* Conditionally render components to properly cleanup Google Maps */}
+          {activeTab === 'checklist' && <Checklist key="checklist" />}
+          {activeTab === 'map' && <MapView key="map" />}
+          {activeTab === 'emergency' && <Emergency key="emergency" />}
         </div>
       </main>
 

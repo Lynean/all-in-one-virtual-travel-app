@@ -43,7 +43,7 @@ export class HybridRouter {
     locationConfirmed?: boolean
   ): Promise<HybridResponse> {
     if (!this.useBackend) {
-      throw new Error('Backend not available. Please configure VITE_BACKEND_URL in .env');
+      throw new Error('Backend not available');
     }
 
     console.log('🤖 Routing to: LangChain Agent (Gemini-powered)');

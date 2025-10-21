@@ -69,14 +69,30 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add middleware to handle private network access from public sites
+@app.middleware("http")
+async def add_private_network_access_headers(request, call_next):
+    response = await call_next(request)
+    # Allow requests from public sites to private networks (for development)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
 # CORS middleware - MUST be before routes
+# Configured to allow requests from specific external domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_origins=[
+        "https://chatandbuildversion-1760972271223.chatand.build",
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,  # Allow credentials for specified origins
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"],  # Expose all headers to the client
+    max_age=3600  # Cache preflight requests for 1 hour
 )
 
 # Include admin router

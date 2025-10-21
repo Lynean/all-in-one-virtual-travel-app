@@ -12,9 +12,6 @@ from config import settings
 from services.redis_service import RedisService
 from tools.weather_tool import WeatherTool
 from tools.currency_tool import CurrencyTool
-from tools.maps_tool import MapsTool
-from tools.routes_tool import GoogleRoutesTool
-from tools.places_tool import GooglePlacesTool, GooglePlaceDetailsTool
 from models.responses import (
     ChatResponse, MapAction, AppAction, 
     ClarificationRequest, BranchDecision
@@ -59,15 +56,7 @@ class AgentService:
         return [
             # Weather and travel info
             WeatherTool(),
-            CurrencyTool(),
-            
-            # Google Maps APIs - Specialized tools
-            GooglePlacesTool(),        # Places API (New) - Search for places, restaurants, hotels
-            GooglePlaceDetailsTool(),  # Places API - Get detailed info about specific places
-            GoogleRoutesTool(),        # Routes API - Compute directions and routes
-            
-            # Legacy maps tool (kept for backward compatibility)
-            MapsTool()
+            CurrencyTool()
         ]
     
 
@@ -92,65 +81,45 @@ User Location: {context.get('current_location', {})}
 Context: {json.dumps(context, indent=2)}
 
 Available Branches:
-1. ROUTES: Compute directions/routes between locations (e.g., "directions to", "how to get to", "route from X to Y")
-2. PLACES: Search for restaurants, hotels, attractions with advanced filters
-   - Supports: place types, dietary restrictions (vegetarian/vegan), amenities (parking/wifi),
-   - Atmosphere (kid-friendly/pet-friendly/outdoor seating), price level, ratings, open now
-   - Examples: "vegetarian restaurants", "pet-friendly cafes", "cheap breakfast places open now"
-3. CHECKLIST: Create task lists, itineraries, packing lists (e.g., "create packing list", "plan my day", "things to do")
-4. TEXT: Provide information without API calls (e.g., "what is", "tell me about", general questions)
+1. CHECKLIST: Create task lists, itineraries, packing lists
+   - Examples: "create packing list", "plan my day", "things to do in Singapore", "create itinerary"
+2. TEXT: Provide information, recommendations, and general assistance
+   - Examples: "what is Singapore like", "tell me about Marina Bay", "best time to visit", "recommend activities"
+   - Also handles all location/place/direction queries (Maps will be handled by frontend)
 
 For each branch, decide:
 - enabled: true/false (should this branch execute?)
 - confidence: 0.0-1.0 (how confident are you?)
 - needs_clarification: true/false (is the query too vague?)
 - clarification: If needs_clarification=true, what question to ask?
-- priority: 1-4 (execution order, 1=highest)
+- priority: 1-2 (execution order, 1=highest)
 
 Guidelines:
-- Enable MULTIPLE branches if query needs them (e.g., "find restaurants and show directions" = PLACES + ROUTES)
-- Set needs_clarification=true ONLY if critical info is missing and you can't make a reasonable assumption
-- Don't ask for clarification if you can infer from context (e.g., "near me" means use user location)
-- TEXT branch is fallback for informational queries
+- Enable MULTIPLE branches if query needs them (e.g., "plan my trip and create packing list" = CHECKLIST + TEXT)
+- For place/location/direction queries, use TEXT branch to provide information
+- Set needs_clarification=true ONLY if critical info is missing
+- TEXT branch is default for most queries
 
 Output ONLY valid JSON (no markdown, no explanations):
 {{
   "branches": [
-    {{
-      "branch": "places",
-      "enabled": true,
-      "confidence": 0.9,
-      "needs_clarification": false,
-      "clarification": null,
-      "priority": 1,
-      "reasoning": "User wants to find places"
-    }},
-    {{
-      "branch": "routes",
-      "enabled": false,
-      "confidence": 0.1,
-      "needs_clarification": false,
-      "clarification": null,
-      "priority": 2,
-      "reasoning": "No route computation needed"
-    }},
     {{
       "branch": "checklist",
       "enabled": false,
       "confidence": 0.0,
       "needs_clarification": false,
       "clarification": null,
-      "priority": 3,
+      "priority": 1,
       "reasoning": "No checklist requested"
     }},
     {{
       "branch": "text",
-      "enabled": false,
-      "confidence": 0.2,
+      "enabled": true,
+      "confidence": 0.9,
       "needs_clarification": false,
       "clarification": null,
-      "priority": 4,
-      "reasoning": "Not an informational query"
+      "priority": 2,
+      "reasoning": "General query or information request"
     }}
   ]
 }}"""
@@ -169,16 +138,19 @@ Output ONLY valid JSON (no markdown, no explanations):
                 branches = []
                 for branch_data in data.get('branches', []):
                     clarification = None
+                    # Check if clarification is needed and is a valid dict (not null/None)
                     if branch_data.get('needs_clarification') and branch_data.get('clarification'):
                         clar_data = branch_data['clarification']
-                        clarification = ClarificationRequest(
-                            branch=branch_data['branch'].lower(),  # Normalize to lowercase
-                            question=clar_data.get('question', ''),
-                            type=clar_data.get('type', 'text'),
-                            options=clar_data.get('options'),
-                            default=clar_data.get('default'),
-                            timeout=clar_data.get('timeout', 30)
-                        )
+                        # Make sure clar_data is a dict, not a string like "null"
+                        if isinstance(clar_data, dict):
+                            clarification = ClarificationRequest(
+                                branch=branch_data['branch'].lower(),  # Normalize to lowercase
+                                question=clar_data.get('question', ''),
+                                type=clar_data.get('type', 'text'),
+                                options=clar_data.get('options'),
+                                default=clar_data.get('default'),
+                                timeout=clar_data.get('timeout', 30)
+                            )
                     
                     branches.append(BranchDecision(
                         branch=branch_data['branch'].lower(),  # Normalize to lowercase
@@ -199,10 +171,8 @@ Output ONLY valid JSON (no markdown, no explanations):
             logger.error(f"Error in intent classification: {e}")
             # Fallback: enable TEXT branch only
             return [
-                BranchDecision(branch="routes", enabled=False, confidence=0.0, priority=1),
-                BranchDecision(branch="places", enabled=False, confidence=0.0, priority=2),
-                BranchDecision(branch="checklist", enabled=False, confidence=0.0, priority=3),
-                BranchDecision(branch="text", enabled=True, confidence=1.0, priority=4,
+                BranchDecision(branch="checklist", enabled=False, confidence=0.0, priority=1),
+                BranchDecision(branch="text", enabled=True, confidence=1.0, priority=2,
                              reasoning="Fallback due to classification error")
             ]
     
@@ -224,189 +194,6 @@ Output ONLY valid JSON (no markdown, no explanations):
         return {"clarifications": clarifications, "has_clarifications": len(clarifications) > 0}
     
     # ==================== PHASE 3: BRANCH EXECUTION ====================
-    
-    async def _execute_routes_branch(
-        self,
-        user_query: str,
-        context: Dict[str, Any],
-        clarifications: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Execute Routes branch - extract route parameters"""
-        prompt = f"""Extract route parameters from the user query.
-
-User Query: "{user_query}"
-User Location: {json.dumps(context.get('current_location', {}))}
-Clarifications: {json.dumps(clarifications)}
-
-Extract:
-- origin: Start location (use user location if "from here" or "from current location")
-- destination: End location (address or place name)
-- travel_mode: DRIVE, WALK, BICYCLE, TRANSIT (default: DRIVE)
-- waypoints: Optional stops along the way
-- avoid: tolls, highways, ferries
-
-Output ONLY valid JSON:
-{{
-  "origin": "1.2929,103.7724",
-  "destination": "Marina Bay Sands",
-  "travelMode": "DRIVE",
-  "waypoints": [],
-  "avoid": []
-}}"""
-
-        try:
-            response = await self.llm.ainvoke(prompt)
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                route_data = json.loads(response_text[json_start:json_end])
-                logger.info(f"🚗 Routes branch: {route_data.get('origin')} → {route_data.get('destination')}")
-                return {"success": True, "data": route_data, "type": "route"}
-            return {"success": False, "error": "Could not parse route data"}
-        except Exception as e:
-            logger.error(f"Error in routes branch: {e}")
-            return {"success": False, "error": str(e)}
-    
-    async def _execute_places_branch(
-        self,
-        user_query: str,
-        context: Dict[str, Any],
-        clarifications: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Execute Places branch - refine query for Google Places Text Search API"""
-        current_location = context.get('current_location', {})
-        lat = current_location.get('lat', 1.2894)
-        lng = current_location.get('lng', 103.8499)
-        location_name = current_location.get('name', 'Unknown')
-        
-        prompt = f"""You are refining a user's query for Google Places API Text Search.
-
-User Query: "{user_query}"
-User Location: {location_name} ({lat}, {lng})
-Clarifications: {json.dumps(clarifications)}
-
-TASK: Create a clear, natural language search query that Google Places API can understand.
-
-GUIDELINES:
-1. If query mentions a specific city/destination, include it: "attractions in Singapore"
-2. If query says "near me" or "nearby", use current location: "restaurants near {location_name}"
-3. If query mentions a SPECIFIC LOCATION (e.g., "near NTU", "near Marina Bay", "at Orchard Road"):
-   - Include that location in textQuery: "restaurants near NTU"
-   - Set needsGeocode: true
-   - Set geocodeLocation: "NTU" (the specific location to geocode)
-4. Keep it natural and conversational - Places API handles complex queries well
-5. Include relevant filters in the text: "cheap vegetarian restaurants", "pet-friendly cafes"
-6. For trip planning, focus on attractions: "top tourist attractions in Singapore"
-
-IMPORTANT LOCATION HANDLING:
-- "near me" / "nearby" → Use user's current location ({lat}, {lng})
-- "near [PLACE]" → Set needsGeocode: true, geocodeLocation: "[PLACE]"
-- "at [PLACE]" → Set needsGeocode: true, geocodeLocation: "[PLACE]"
-- "in [CITY]" → Include city in textQuery, use city center coordinates
-
-DESTINATION COORDINATES (use if mentioned in query):
-- Singapore: 1.3521, 103.8198
-- Malaysia/KL: 3.1390, 101.6869
-- Bangkok: 13.7563, 100.5018
-- Vietnam/Hanoi: 21.0285, 105.8542
-- Vietnam/HCMC: 10.8231, 106.6297
-
-COMMON SINGAPORE LOCATIONS (set needsGeocode: true for these):
-- NTU (Nanyang Technological University): 1.3483, 103.6831
-- NUS (National University of Singapore): 1.2966, 103.7764
-- Marina Bay: 1.2806, 103.8586
-- Orchard Road: 1.3048, 103.8318
-- Changi Airport: 1.3644, 103.9915
-- Sentosa: 1.2494, 103.8303
-
-OPTIONAL PARAMETERS (only if explicitly mentioned):
-- locationBias: circle with center (lat, lng) and radius in meters
-  NOTE: Frontend will convert this to locationRestriction for strict radius enforcement
-- priceLevels: ["PRICE_LEVEL_INEXPENSIVE"] for "cheap", ["PRICE_LEVEL_EXPENSIVE", "PRICE_LEVEL_VERY_EXPENSIVE"] for "expensive"
-- minRating: 4.0 for "good ratings", 4.5 for "excellent"
-- openNow: true if "open now" mentioned
-- includedType: single type like "restaurant", "cafe", "hotel" (optional, helps narrow results)
-
-EXAMPLES:
-"Find vegetarian restaurants near me" → 
-{{"textQuery": "vegetarian restaurants", "locationBias": {{"circle": {{"center": {{"latitude": {lat}, "longitude": {lng}}}, "radius": 5000}}}}}}
-
-"Restaurants near NTU" →
-{{"textQuery": "restaurants near NTU", "needsGeocode": true, "geocodeLocation": "NTU Singapore", "radius": 5000}}
-
-"Coffee shops at Marina Bay" →
-{{"textQuery": "coffee shops at Marina Bay", "needsGeocode": true, "geocodeLocation": "Marina Bay Singapore", "radius": 3000}}
-
-"Plan a 3-day trip to Singapore" →
-{{"textQuery": "tourist attractions in Singapore", "locationBias": {{"circle": {{"center": {{"latitude": 1.3521, "longitude": 103.8198}}, "radius": 10000}}}}}}
-
-"Cheap breakfast places open now" →
-{{"textQuery": "cheap breakfast restaurants", "priceLevels": ["PRICE_LEVEL_INEXPENSIVE"], "openNow": true, "locationBias": {{"circle": {{"center": {{"latitude": {lat}, "longitude": {lng}}}, "radius": 5000}}}}}}
-
-"Pet-friendly cafes near Orchard Road" →
-{{"textQuery": "pet-friendly cafes near Orchard Road", "needsGeocode": true, "geocodeLocation": "Orchard Road Singapore", "radius": 2000}}
-
-Output ONLY valid JSON (omit optional params if not needed):
-
-FOR QUERIES WITH SPECIFIC LOCATION (e.g., "near NTU", "at Marina Bay"):
-{{
-  "textQuery": "refined natural language query",
-  "needsGeocode": true,
-  "geocodeLocation": "specific location to geocode",
-  "radius": 5000,
-  "minRating": 4.0,
-  "openNow": false,
-  "priceLevels": ["PRICE_LEVEL_MODERATE"]
-}}
-
-FOR QUERIES USING CURRENT LOCATION (e.g., "near me"):
-{{
-  "textQuery": "refined natural language query",
-  "locationBias": {{"circle": {{"center": {{"latitude": 1.29, "longitude": 103.77}}, "radius": 5000}}}},
-  "minRating": 4.0,
-  "openNow": false,
-  "priceLevels": ["PRICE_LEVEL_MODERATE"]
-}}"""
-
-        try:
-            response = await self.llm.ainvoke(prompt)
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            
-            # Log response for debugging
-            logger.info(f"Places LLM response length: {len(response_text)} chars")
-            if not response_text or len(response_text.strip()) == 0:
-                logger.warning("⚠️ Places branch received empty response from LLM")
-                return {"success": False, "error": "Empty response from LLM"}
-            
-            logger.debug(f"Places response preview: {response_text[:300]}")
-            
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                places_data = json.loads(json_str)
-                
-                # Validate required field
-                if not places_data.get('textQuery'):
-                    logger.warning(f"⚠️ Places branch missing textQuery. Data: {places_data}")
-                    return {"success": False, "error": "Missing required textQuery"}
-                
-                logger.info(f"📍 Places Text Search: \"{places_data.get('textQuery')}\"")
-                logger.info(f"📍 Places params: {json.dumps({k: v for k, v in places_data.items() if k != 'textQuery'}, indent=2)}")
-                
-                return {"success": True, "data": places_data, "type": "search"}
-            
-            logger.warning(f"⚠️ No JSON found in places response: {response_text[:500]}")
-            return {"success": False, "error": "Could not parse places data - no JSON found"}
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error in places branch: {e}")
-            logger.error(f"Raw response: {response_text[:500]}")
-            return {"success": False, "error": f"JSON parsing error: {str(e)}"}
-        except Exception as e:
-            logger.error(f"Error in places branch: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
     
     async def _execute_checklist_branch(
         self,
@@ -433,19 +220,17 @@ Create a comprehensive checklist with these categories (keep items concise):
 
 IMPORTANT:
 - Keep each item under 100 characters
-- Use "high" for essentials, "medium" for important, "low" for optional
 - Include country-specific requirements (e.g., SG Arrival Card for Singapore, ESTA for USA)
 - Output ONLY valid JSON, no markdown
 
 Format:
 {{
-  "type": "comprehensive",
   "title": "[Destination] Trip Checklist",
   "categories": [
     {{
       "category": "Category Name",
       "items": [
-        {{"text": "Brief item description", "checked": false, "priority": "high|medium|low"}}
+        {{"text": "Brief item description", "checked": false}}
       ]
     }}
   ]
@@ -566,11 +351,7 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
         
         try:
             for branch in sorted(enabled_branches, key=lambda x: x.priority):
-                if branch.branch == "routes":
-                    tasks.append(self._execute_routes_branch(user_query, context, clarifications))
-                elif branch.branch == "places":
-                    tasks.append(self._execute_places_branch(user_query, context, clarifications))
-                elif branch.branch == "checklist":
+                if branch.branch == "checklist":
                     tasks.append(self._execute_checklist_branch(user_query, context, clarifications))
                 elif branch.branch == "text":
                     tasks.append(self._execute_text_branch(user_query, context, chat_history))
@@ -609,7 +390,6 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
         """Aggregate branch results and generate final response"""
         
         # Separate results by type
-        map_actions = []
         app_actions = []
         text_responses = []
         
@@ -623,73 +403,55 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
                 
             result_type = result.get('type')
             data = result.get('data', {})
-            
-            if result_type == 'route':
-                map_actions.append(MapAction(type="route", data=data))
-                logger.info(f"  ✅ Added route action")
-            elif result_type == 'search':
-                map_actions.append(MapAction(type="search", data=data))
-                logger.info(f"  ✅ Added search action")
-            elif result_type == 'checklist':
+            if result_type == 'checklist':
                 app_actions.append(AppAction(type="checklist", data=data))
                 logger.info(f"  ✅ Added checklist action with {len(data.get('items', []))} items")
             elif result_type == 'text':
                 text_responses.append(data.get('message', ''))
                 logger.info(f"  ✅ Added text response")
         
-        # Generate final message
-        prompt = f"""Generate a friendly response summarizing the results.
-
-User Query: "{user_query}"
-
-Results:
-- Route actions: {len([a for a in map_actions if a.type == 'route'])}
-- Place searches: {len([a for a in map_actions if a.type == 'search'])}
-- Checklists: {len([a for a in app_actions if a.type == 'checklist'])}
-- Text responses: {len(text_responses)}
-
-Branch Results:
-{json.dumps(branch_results, indent=2)}
-
-Generate a 1-2 sentence friendly response that:
-1. Confirms what you found
-2. Directs user to check the map/checklist if applicable
-3. Is conversational and helpful
-
-Example: "I've found 15 restaurants near you and created a route to the top-rated one. Check the map and your personalized checklist!"
-
-Output only the message text (no JSON, no formatting):"""
-
-        try:
-            response = await self.llm.ainvoke(prompt)
-            final_message = response.content if hasattr(response, 'content') else str(response)
-            final_message = final_message.strip()
-        except Exception as e:
-            logger.error(f"Error generating final message: {e}")
-            # Fallback message
-            if text_responses:
-                final_message = text_responses[0]
-            elif map_actions:
-                final_message = "I've found some results for you. Check the map for details!"
-            elif app_actions:
-                final_message = "I've created a checklist for you. Check it out below!"
-            else:
-                final_message = "I've processed your request. Let me know if you need anything else!"
+        # Determine final message
+        # Combine all responses appropriately
+        message_parts = []
+        
+        # Add text responses first
+        if text_responses:
+            message_parts.extend(text_responses)
+            logger.info(f"💬 Added {len(text_responses)} text response(s)")
+        
+        # Add checklist acknowledgment if present
+        if app_actions:
+            checklist_msg = "I've created a checklist for you. Check it out below!"
+            message_parts.append(checklist_msg)
+            logger.info(f"📋 Added checklist acknowledgment")
+        
+        # Combine all parts or use fallback
+        if message_parts:
+            final_message = '\n\n'.join(message_parts)
+        else:
+            final_message = "I'm here to help with your travel planning. Let me know if you need anything!"
+            logger.info(f"❓ Using fallback message")
         
         # Generate suggestions
         suggestions = []
-        if any(a.type == 'search' for a in map_actions):
-            suggestions.append("Would you like me to filter by price or rating?")
-        if any(a.type == 'route' for a in map_actions):
-            suggestions.append("Need parking information at your destination?")
-        if app_actions:
-            suggestions.append("Would you like to export or share this checklist?")
+        if app_actions and text_responses:
+            # Both present
+            suggestions.append("Would you like to customize this checklist?")
+            suggestions.append("Need more details about anything?")
+        elif app_actions:
+            # Only checklist
+            suggestions.append("Would you like to customize this checklist?")
+            suggestions.append("Need recommendations for your trip?")
+        elif text_responses:
+            # Only text
+            suggestions.append("Would you like more details?")
+            suggestions.append("Any other questions?")
         
-        logger.info(f"✨ Final response: {len(map_actions)} map actions, {len(app_actions)} app actions")
+        logger.info(f"✨ Final response: {len(app_actions)} app actions, message length: {len(final_message)}")
         
         return {
             "message": final_message,
-            "map_actions": map_actions,
+            "map_actions": [],  # No map actions from backend
             "app_actions": app_actions,
             "suggestions": suggestions[:2]  # Max 2 suggestions
         }
@@ -933,92 +695,4 @@ Output only the message text (no JSON, no formatting):"""
         
         return message
     
-    def _parse_map_actions(self, response: str) -> List[MapAction]:
-        """Parse map action commands from agent response"""
-        actions = []
-        import re
-        import json as json_module
-        
-        logger.info(f"🔍 Parsing map actions from response (length: {len(response)} chars)")
-        logger.info(f"🔍 Response preview: {response[:500]}")
-        
-        # Search for [MAP_SEARCH:{json}] pattern (new format with JSON)
-        search_pattern = r'\[MAP_SEARCH:(\{[^\]]+\})\]'
-        for match in re.finditer(search_pattern, response):
-            try:
-                search_data = json_module.loads(match.group(1))
-                actions.append(MapAction(
-                    type="search",
-                    data=search_data
-                ))
-            except json_module.JSONDecodeError:
-                logger.warning(f"Failed to parse MAP_SEARCH JSON: {match.group(1)}")
-        
-        # Legacy search pattern [MAP_SEARCH:simple_query]
-        legacy_search_pattern = r'\[MAP_SEARCH:([^\]]+)\]'
-        for match in re.finditer(legacy_search_pattern, response):
-            query = match.group(1).strip()
-            if not query.startswith('{'):  # Not a JSON object
-                actions.append(MapAction(
-                    type="search",
-                    data={"query": query}
-                ))
-        
-        # Search for [MAP_ROUTE:{json}] pattern
-        route_pattern = r'\[MAP_ROUTE:(\{[^\]]+\})\]'
-        for match in re.finditer(route_pattern, response):
-            try:
-                route_data = json_module.loads(match.group(1))
-                actions.append(MapAction(
-                    type="route",
-                    data=route_data
-                ))
-            except json_module.JSONDecodeError:
-                logger.warning(f"Failed to parse MAP_ROUTE JSON: {match.group(1)}")
-        
-        # Search for [MAP_DIRECTIONS:destination] pattern (legacy)
-        directions_pattern = r'\[MAP_DIRECTIONS:([^\]]+)\]'
-        for match in re.finditer(directions_pattern, response):
-            destination = match.group(1).strip()
-            if not destination.startswith('{'):  # Not a JSON object
-                actions.append(MapAction(
-                    type="directions",
-                    data={"destination": destination}
-                ))
-        
-        # Search for [MAP_PLACE_DETAILS:place_id] pattern
-        details_pattern = r'\[MAP_PLACE_DETAILS:([^\]]+)\]'
-        for match in re.finditer(details_pattern, response):
-            actions.append(MapAction(
-                type="place_details",
-                data={"place_id": match.group(1).strip()}
-            ))
-        
-        # Search for [MAP_MARKER:lat,lng,label] pattern
-        marker_pattern = r'\[MAP_MARKER:([0-9.-]+),([0-9.-]+),([^\]]+)\]'
-        for match in re.finditer(marker_pattern, response):
-            actions.append(MapAction(
-                type="marker",
-                data={
-                    "location": {
-                        "lat": float(match.group(1)),
-                        "lng": float(match.group(2))
-                    },
-                    "label": match.group(3).strip()
-                }
-            ))
-        
-        # Search for [MAP_ZOOM:level] pattern
-        zoom_pattern = r'\[MAP_ZOOM:([0-9]+)\]'
-        for match in re.finditer(zoom_pattern, response):
-            actions.append(MapAction(
-                type="zoom",
-                data={"zoom": int(match.group(1))}
-            ))
-        
-        logger.info(f"🔍 Found {len(actions)} map actions")
-        if actions:
-            for action in actions:
-                logger.info(f"  - {action.type}: {action.data}")
-        
-        return actions
+    # ==================== UTILITY METHODS ====================

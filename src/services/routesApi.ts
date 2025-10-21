@@ -17,6 +17,27 @@ const getApiKey = async (): Promise<string> => {
 
 const ROUTES_API_BASE_URL = 'https://routes.googleapis.com';
 
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * @returns Distance in kilometers
+ */
+const calculateDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number => {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 export interface Location {
   latitude: number;
   longitude: number;
@@ -199,6 +220,23 @@ export const computeRoutes = async (
     const apiKey = await getApiKey();
     console.log('🔑 API Key exists:', !!apiKey, 'Length:', apiKey?.length);
     const travelMode = request.travelMode || TravelMode.TRANSIT;
+    
+    // Validate origin and destination distance (max 1000km)
+    if (request.origin.location?.latLng && request.destination.location?.latLng) {
+      const originLat = request.origin.location.latLng.latitude;
+      const originLng = request.origin.location.latLng.longitude;
+      const destLat = request.destination.location.latLng.latitude;
+      const destLng = request.destination.location.latLng.longitude;
+      
+      const distanceKm = calculateDistance(originLat, originLng, destLat, destLng);
+      console.log(`📏 Distance between origin and destination: ${distanceKm.toFixed(2)} km`);
+      
+      if (distanceKm > 1000) {
+        const errorMessage = `Sorry, we cannot provide routes for distances over 1000km. The distance between your origin and destination is ${distanceKm.toFixed(0)} km. Please choose locations closer together.`;
+        console.error('❌ Distance exceeds 1000km limit:', errorMessage);
+        throw new Error(errorMessage);
+      }
+    }
     
     // Build request body
     const requestBody: any = {

@@ -60,10 +60,9 @@ export const createMarker = async (
   map: google.maps.Map,
   position: google.maps.LatLngLiteral,
   title: string
-): Promise<google.maps.marker.AdvancedMarkerElement> => {
-  const { AdvancedMarkerElement } = await google.maps.importLibrary('marker') as google.maps.MarkerLibrary;
-  
-  const marker = new AdvancedMarkerElement({
+): Promise<google.maps.Marker> => {
+  // Use standard Marker instead of AdvancedMarkerElement to avoid React DOM conflicts
+  const marker = new google.maps.Marker({
     map,
     position,
     title,
