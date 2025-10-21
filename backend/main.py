@@ -560,23 +560,4 @@ async def compute_routes(request: RouteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    
-    # Railway provides PORT environment variable
-    try:
-        port = int(os.getenv("PORT", "8000"))
-    except (ValueError, TypeError):
-        port = 8000
-    
-    logger.info(f"🚀 Starting server on port {port}")
-    logger.info(f"🔧 PORT environment variable: {os.getenv('PORT', 'not set')}")
-    
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=False,  # Disable reload in production
-        log_level="info"
-    )
+# Note: Server startup is handled by server.py for Railway deployment
