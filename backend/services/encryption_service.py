@@ -38,6 +38,17 @@ class EncryptionService:
         except Exception as e:
             print(f"Decryption error: {e}")
             raise
+    
+    def mask_key(self, value: str) -> str:
+        """
+        Mask an API key for safe display
+        Shows first 8 and last 4 characters, masks the rest
+        Example: AIzaSyBQ...l9sQ
+        """
+        if not value or len(value) <= 12:
+            return "***"
+        
+        return f"{value[:8]}...{value[-4:]}"
 
 # Singleton instance
 encryption_service = EncryptionService()
