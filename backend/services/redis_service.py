@@ -1,11 +1,8 @@
 import redis.asyncio as redis
 import json
-import logging
 from typing import Dict, Any, Optional
 
 from config import settings
-
-logger = logging.getLogger(__name__)
 
 
 class RedisService:
@@ -19,7 +16,6 @@ class RedisService:
         try:
             # Parse Redis URL to handle Railway's format
             redis_url = settings.redis_url
-            logger.info(f"Attempting to connect to Redis: {redis_url}")
             
             # Railway Redis URLs include authentication in the URL
             # Format: redis://default:password@host:port
@@ -35,10 +31,7 @@ class RedisService:
             
             # Test connection
             await self.client.ping()
-            logger.info(f"✅ Redis connection established to {redis_url.split('@')[-1] if '@' in redis_url else redis_url}")
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {str(e)}")
-            logger.error(f"❌ Redis URL was: {redis_url}")
             # Don't raise the exception to allow the app to start without Redis
             self.client = None
     
@@ -46,7 +39,6 @@ class RedisService:
         """Disconnect from Redis"""
         if self.client:
             await self.client.close()
-            logger.info("Redis connection closed")
     
     async def ping(self) -> bool:
         """Check Redis connection"""
@@ -70,9 +62,7 @@ class RedisService:
                 settings.session_ttl,
                 json.dumps(data)
             )
-            logger.debug(f"Session {session_id} stored")
         except Exception as e:
-            logger.error(f"Failed to store session {session_id}: {str(e)}")
             raise
     
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -93,7 +83,6 @@ class RedisService:
                 return json.loads(data)
             return None
         except Exception as e:
-            logger.error(f"Failed to retrieve session {session_id}: {str(e)}")
             return None
     
     async def delete_session(self, session_id: str):
@@ -106,9 +95,7 @@ class RedisService:
         try:
             key = f"session:{session_id}"
             await self.client.delete(key)
-            logger.debug(f"Session {session_id} deleted")
         except Exception as e:
-            logger.error(f"Failed to delete session {session_id}: {str(e)}")
             raise
     
     async def extend_session(self, session_id: str):
@@ -121,9 +108,8 @@ class RedisService:
         try:
             key = f"session:{session_id}"
             await self.client.expire(key, settings.session_ttl)
-            logger.debug(f"Session {session_id} TTL extended")
         except Exception as e:
-            logger.error(f"Failed to extend session {session_id}: {str(e)}")
+            pass
     
     async def get_api_key(self, key_name: str) -> Optional[str]:
         """
@@ -137,19 +123,15 @@ class RedisService:
         """
         try:
             if not self.client:
-                logger.error("Redis client not connected - cannot retrieve API key")
                 return None
             
             key = f"api_key:{key_name}"
             value = await self.client.get(key)
             if value:
-                logger.debug(f"API key {key_name} retrieved from Redis")
                 return value
             else:
-                logger.warning(f"API key {key_name} not found in Redis")
                 return None
         except Exception as e:
-            logger.error(f"Failed to retrieve API key {key_name}: {str(e)}")
             return None
     
     async def set_api_key(self, key_name: str, key_value: str):
@@ -163,9 +145,7 @@ class RedisService:
         try:
             key = f"api_key:{key_name}"
             await self.client.set(key, key_value)
-            logger.info(f"API key {key_name} stored in Redis")
         except Exception as e:
-            logger.error(f"Failed to store API key {key_name}: {str(e)}")
             raise
     
     async def list_api_keys(self) -> Dict[str, str]:
@@ -186,8 +166,6 @@ class RedisService:
                 if value:
                     result[key_name] = value
             
-            logger.debug(f"Retrieved {len(result)} API keys from Redis")
             return result
         except Exception as e:
-            logger.error(f"Failed to list API keys: {str(e)}")
             return {}
