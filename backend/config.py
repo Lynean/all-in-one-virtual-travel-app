@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     
     # Frontend API Keys (VITE_ prefixed for frontend)
     vite_google_maps_api_key: str = ""
-    vite_google_maps_map_id: str = ""
     
     # API Keys - Optional (not currently used in the app)
     openweather_api_key: str = ""

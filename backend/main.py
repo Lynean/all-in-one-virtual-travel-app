@@ -126,20 +126,17 @@ app.include_router(admin.router)
 async def get_google_maps_config():
     """
     Public endpoint to provide Google Maps configuration for frontend
-    Returns API key and map ID needed for Google Maps integration
+    Returns API key needed for Google Maps integration
     """
     try:
         logger.info("Attempting to retrieve Google Maps configuration from Redis...")
         
         maps_api_key = None
-        maps_map_id = None
         
         if redis_service and redis_service.client:
             # Try to get from Redis first
             maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
-            maps_map_id = await redis_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
             logger.info(f"Redis: Maps API key {'found' if maps_api_key else 'not found'}")
-            logger.info(f"Redis: Maps Map ID {'found' if maps_map_id else 'not found'}")
         else:
             logger.warning("Redis service not available, checking environment variables...")
         
@@ -148,11 +145,6 @@ async def get_google_maps_config():
             import os
             maps_api_key = os.getenv("VITE_GOOGLE_MAPS_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY")
             logger.info(f"Environment: Maps API key {'found' if maps_api_key else 'not found'}")
-        
-        if not maps_map_id:
-            import os
-            maps_map_id = os.getenv("VITE_GOOGLE_MAPS_MAP_ID") or os.getenv("GOOGLE_MAPS_MAP_ID")
-            logger.info(f"Environment: Maps Map ID {'found' if maps_map_id else 'not found'}")
         
         if not maps_api_key:
             logger.error("Google Maps API key not found in Redis or environment variables")
@@ -163,7 +155,6 @@ async def get_google_maps_config():
         
         config = {
             "apiKey": maps_api_key,
-            "mapId": maps_map_id,  # This can be None if not set
             "libraries": ["places", "geometry", "drawing"],
             "version": "weekly"
         }
@@ -209,8 +200,7 @@ async def debug_redis_keys():
             "api_keys_found": len(api_keys),
             "keys": masked_keys,
             "required_keys": {
-                "VITE_GOOGLE_MAPS_API_KEY": "VITE_GOOGLE_MAPS_API_KEY" in api_keys,
-                "VITE_GOOGLE_MAPS_MAP_ID": "VITE_GOOGLE_MAPS_MAP_ID" in api_keys
+                "VITE_GOOGLE_MAPS_API_KEY": "VITE_GOOGLE_MAPS_API_KEY" in api_keys
             }
         }
     except Exception as e:
