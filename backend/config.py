@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     gemini_api_key: str
     google_maps_api_key: str
     
+    # Frontend API Keys (VITE_ prefixed for frontend)
+    vite_google_maps_api_key: str = ""
+    vite_google_maps_map_id: str = ""
+    
     # API Keys - Optional (not currently used in the app)
     openweather_api_key: str = ""
     exchangerate_api_key: str = ""
@@ -22,8 +26,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     
     # CORS - Support both local and deployed frontends  
-    @property
-    def cors_origins(self) -> List[str]:
+    def get_cors_origins(self) -> List[str]:
         if self.environment == "production":
             return ["*"]  # Allow all origins in production
         return [
@@ -50,6 +53,7 @@ class Settings(BaseSettings):
         case_sensitive = False
         # Allow Railway environment variables to override .env
         env_file_encoding = 'utf-8'
+        extra = 'allow'  # Allow extra fields for environment variables
 
 
 settings = Settings()
