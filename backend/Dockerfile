@@ -19,5 +19,5 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Run application
-CMD ["python", "main.py"]
+# Run application with uvicorn (Railway sets PORT env var)
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
