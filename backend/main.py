@@ -566,10 +566,12 @@ if __name__ == "__main__":
     
     # Railway provides PORT environment variable
     port = int(os.getenv("PORT", 8000))
+    logger.info(f"🚀 Starting server on port {port}")
     
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=settings.environment == "development"
+        reload=settings.environment == "development",
+        log_level="info"
     )
