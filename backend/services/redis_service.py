@@ -19,6 +19,7 @@ class RedisService:
         try:
             # Parse Redis URL to handle Railway's format
             redis_url = settings.redis_url
+            logger.info(f"Attempting to connect to Redis: {redis_url}")
             
             # Railway Redis URLs include authentication in the URL
             # Format: redis://default:password@host:port
@@ -26,9 +27,10 @@ class RedisService:
                 redis_url,
                 encoding="utf-8",
                 decode_responses=True,
-                socket_connect_timeout=5,
+                socket_connect_timeout=10,
                 socket_keepalive=True,
-                health_check_interval=30
+                health_check_interval=30,
+                retry_on_timeout=True
             )
             
             # Test connection
@@ -36,7 +38,9 @@ class RedisService:
             logger.info(f"✅ Redis connection established to {redis_url.split('@')[-1] if '@' in redis_url else redis_url}")
         except Exception as e:
             logger.error(f"❌ Redis connection failed: {str(e)}")
-            raise
+            logger.error(f"❌ Redis URL was: {redis_url}")
+            # Don't raise the exception to allow the app to start without Redis
+            self.client = None
     
     async def disconnect(self):
         """Disconnect from Redis"""
@@ -132,6 +136,10 @@ class RedisService:
             API key value or None if not found
         """
         try:
+            if not self.client:
+                logger.error("Redis client not connected - cannot retrieve API key")
+                return None
+            
             key = f"api_key:{key_name}"
             value = await self.client.get(key)
             if value:

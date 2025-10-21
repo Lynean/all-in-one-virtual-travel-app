@@ -106,20 +106,35 @@ async def get_google_maps_config():
     try:
         logger.info("Attempting to retrieve Google Maps configuration from Redis...")
         
-        if not redis_service:
-            logger.error("Redis service not available")
-            raise HTTPException(status_code=503, detail="Redis service unavailable")
+        maps_api_key = None
+        maps_map_id = None
         
-        # Get the API keys from Redis
-        maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
-        logger.info(f"Maps API key retrieved: {'Found' if maps_api_key else 'Not found'}")
+        if redis_service and redis_service.client:
+            # Try to get from Redis first
+            maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
+            maps_map_id = await redis_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
+            logger.info(f"Redis: Maps API key {'found' if maps_api_key else 'not found'}")
+            logger.info(f"Redis: Maps Map ID {'found' if maps_map_id else 'not found'}")
+        else:
+            logger.warning("Redis service not available, checking environment variables...")
         
-        maps_map_id = await redis_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
-        logger.info(f"Maps Map ID retrieved: {'Found' if maps_map_id else 'Not found'}")
+        # Fallback to environment variables if Redis fails
+        if not maps_api_key:
+            import os
+            maps_api_key = os.getenv("VITE_GOOGLE_MAPS_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY")
+            logger.info(f"Environment: Maps API key {'found' if maps_api_key else 'not found'}")
+        
+        if not maps_map_id:
+            import os
+            maps_map_id = os.getenv("VITE_GOOGLE_MAPS_MAP_ID") or os.getenv("GOOGLE_MAPS_MAP_ID")
+            logger.info(f"Environment: Maps Map ID {'found' if maps_map_id else 'not found'}")
         
         if not maps_api_key:
-            logger.warning("Google Maps API key not found in Redis")
-            raise HTTPException(status_code=503, detail="Google Maps API key not configured")
+            logger.error("Google Maps API key not found in Redis or environment variables")
+            raise HTTPException(
+                status_code=503, 
+                detail="Google Maps API key not configured. Please check Redis connection or environment variables."
+            )
         
         config = {
             "apiKey": maps_api_key,
@@ -128,7 +143,7 @@ async def get_google_maps_config():
             "version": "weekly"
         }
         
-        logger.info("Google Maps configuration retrieved successfully from Redis")
+        logger.info("Google Maps configuration retrieved successfully")
         return config
         
     except HTTPException:
@@ -197,16 +212,39 @@ async def health_check():
     """Detailed health check"""
     try:
         from datetime import datetime
+        import os
         
         # Check Redis connection
-        redis_healthy = await redis_service.ping() if redis_service else False
+        redis_healthy = False
+        redis_error = None
+        if redis_service:
+            try:
+                redis_healthy = await redis_service.ping() if redis_service.client else False
+            except Exception as e:
+                redis_error = str(e)
+        
+        # Check for API keys
+        maps_key_available = bool(
+            (redis_service and redis_service.client and await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")) or
+            os.getenv("VITE_GOOGLE_MAPS_API_KEY") or 
+            os.getenv("GOOGLE_MAPS_API_KEY")
+        )
         
         return {
             "status": "healthy",
             "services": {
-                "redis": "connected" if redis_healthy else "disconnected",
+                "redis": {
+                    "connected": redis_healthy,
+                    "error": redis_error,
+                    "url": settings.redis_url.split('@')[-1] if '@' in settings.redis_url else settings.redis_url
+                },
                 "agent": "operational",
                 "model": "gemini-2.5-flash"
+            },
+            "configuration": {
+                "environment": settings.environment,
+                "maps_key_available": maps_key_available,
+                "redis_url_set": bool(os.getenv("REDIS_URL")),
             },
             "timestamp": datetime.utcnow().isoformat()
         }
