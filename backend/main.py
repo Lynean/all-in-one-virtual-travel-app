@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
 from typing import Dict, Any
@@ -71,6 +73,19 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+
+# Add validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    logger.error(f"Validation error on {request.method} {request.url}: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Validation error",
+            "errors": exc.errors(),
+            "body": str(exc.body) if hasattr(exc, 'body') else None
+        }
+    )
 
 # Add middleware to handle private network access (only for development)
 if settings.environment == "development":
@@ -195,6 +210,35 @@ async def debug_redis_keys():
         }
 
 
+@app.post("/api/debug/chat-validate")
+async def debug_chat_validate(request_data: dict):
+    """
+    Debug endpoint to validate chat request format
+    """
+    try:
+        logger.info(f"Debug chat validation - received data: {request_data}")
+        
+        # Try to validate the request
+        chat_request = ChatRequest(**request_data)
+        
+        return {
+            "status": "valid",
+            "parsed_request": {
+                "user_id": chat_request.user_id,
+                "session_id": chat_request.session_id,
+                "message": chat_request.message,
+                "context": chat_request.context
+            }
+        }
+    except Exception as e:
+        logger.error(f"Chat validation error: {e}")
+        return {
+            "status": "invalid",
+            "error": str(e),
+            "received_data": request_data
+        }
+
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -269,6 +313,14 @@ async def chat(request: ChatRequest):
         logger.info(f"Message received: '{request.message}'")
         logger.info(f"Context: {request.context}")
         
+        # Validate required fields
+        if not request.user_id:
+            raise HTTPException(status_code=422, detail="user_id is required")
+        if not request.session_id:
+            raise HTTPException(status_code=422, detail="session_id is required")
+        if not request.message:
+            raise HTTPException(status_code=422, detail="message is required")
+        
         response = await agent_service.process_message(
             user_id=request.user_id,
             session_id=request.session_id,
@@ -278,6 +330,8 @@ async def chat(request: ChatRequest):
         
         return response
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
