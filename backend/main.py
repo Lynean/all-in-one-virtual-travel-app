@@ -44,6 +44,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"📍 Environment: {settings.environment}")
     logger.info(f"🔗 Redis URL: {settings.redis_url.split('@')[-1] if '@' in settings.redis_url else settings.redis_url}")
     
+    # Check critical environment variables
+    import os
+    logger.info(f"🔧 PORT: {os.getenv('PORT', 'not set, using 8000')}")
+    logger.info(f"🔧 GEMINI_API_KEY: {'set' if os.getenv('GEMINI_API_KEY') else 'NOT SET'}")
+    logger.info(f"🔧 REDIS_URL: {'set' if os.getenv('REDIS_URL') else 'NOT SET'}")
+    
     # Initialize Redis
     redis_service = RedisService()
     try:
@@ -55,9 +61,13 @@ async def lifespan(app: FastAPI):
         redis_service = None
     
     # Initialize Agent Service with Gemini
-    agent_service = AgentService(redis_service)
-    logger.info("✅ Gemini agent service initialized")
-    logger.info(f"🤖 Using model: {settings.primary_model}")
+    try:
+        agent_service = AgentService(redis_service)
+        logger.info("✅ Gemini agent service initialized")
+        logger.info(f"🤖 Using model: {settings.primary_model}")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize agent service: {e}")
+        raise
     
     yield
     
@@ -552,10 +562,14 @@ async def compute_routes(request: RouteRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    
+    # Railway provides PORT environment variable
+    port = int(os.getenv("PORT", 8000))
     
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.environment == "development"
     )
