@@ -97,6 +97,37 @@ app.add_middleware(
 app.include_router(admin.router)
 
 
+@app.get("/api/public/google-maps-config")
+async def get_google_maps_config():
+    """
+    Public endpoint to provide Google Maps configuration for frontend
+    Returns API key and map ID needed for Google Maps integration
+    """
+    from services.admin_service import admin_service
+    
+    try:
+        # Get the encrypted keys from storage
+        maps_api_key = admin_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
+        maps_map_id = admin_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
+        
+        if not maps_api_key:
+            logger.warning("Google Maps API key not found")
+            raise HTTPException(status_code=503, detail="Google Maps API key not configured")
+        
+        config = {
+            "apiKey": maps_api_key,
+            "mapId": maps_map_id,  # This can be None if not set
+            "libraries": ["places", "geometry", "drawing"],
+            "version": "weekly"
+        }
+        
+        return config
+        
+    except Exception as e:
+        logger.error(f"Error retrieving Google Maps config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve Google Maps configuration")
+
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
