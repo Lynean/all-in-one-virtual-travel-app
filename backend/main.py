@@ -103,20 +103,22 @@ async def get_google_maps_config():
     Public endpoint to provide Google Maps configuration for frontend
     Returns API key and map ID needed for Google Maps integration
     """
-    from services.admin_service import admin_service
-    
     try:
-        logger.info("Attempting to retrieve Google Maps configuration...")
+        logger.info("Attempting to retrieve Google Maps configuration from Redis...")
         
-        # Get the encrypted keys from storage
-        maps_api_key = admin_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
+        if not redis_service:
+            logger.error("Redis service not available")
+            raise HTTPException(status_code=503, detail="Redis service unavailable")
+        
+        # Get the API keys from Redis
+        maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
         logger.info(f"Maps API key retrieved: {'Found' if maps_api_key else 'Not found'}")
         
-        maps_map_id = admin_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
+        maps_map_id = await redis_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
         logger.info(f"Maps Map ID retrieved: {'Found' if maps_map_id else 'Not found'}")
         
         if not maps_api_key:
-            logger.warning("Google Maps API key not found or failed to decrypt")
+            logger.warning("Google Maps API key not found in Redis")
             raise HTTPException(status_code=503, detail="Google Maps API key not configured")
         
         config = {
@@ -126,7 +128,7 @@ async def get_google_maps_config():
             "version": "weekly"
         }
         
-        logger.info("Google Maps configuration retrieved successfully")
+        logger.info("Google Maps configuration retrieved successfully from Redis")
         return config
         
     except HTTPException:
@@ -136,29 +138,44 @@ async def get_google_maps_config():
         raise HTTPException(status_code=500, detail=f"Failed to retrieve Google Maps configuration: {str(e)}")
 
 
-@app.get("/api/public/debug/encryption")
-async def debug_encryption():
+@app.get("/api/public/debug/redis-keys")
+async def debug_redis_keys():
     """
-    Debug endpoint to check encryption service status
+    Debug endpoint to check Redis API keys
     """
-    import os
-    from services.encryption_service import encryption_service
-    
     try:
-        # Test encryption/decryption
-        test_value = "test123"
-        encrypted = encryption_service.encrypt(test_value)
-        decrypted = encryption_service.decrypt(encrypted)
+        if not redis_service:
+            return {"redis_connected": False, "error": "Redis service not available"}
+        
+        # Test Redis connection
+        ping_result = await redis_service.ping()
+        
+        if not ping_result:
+            return {"redis_connected": False, "error": "Redis ping failed"}
+        
+        # Get all API keys
+        api_keys = await redis_service.list_api_keys()
+        
+        # Mask the key values for security
+        masked_keys = {}
+        for key_name, key_value in api_keys.items():
+            if key_value and len(key_value) > 8:
+                masked_keys[key_name] = f"{key_value[:4]}...{key_value[-4:]}"
+            else:
+                masked_keys[key_name] = "***"
         
         return {
-            "encryption_key_set": bool(os.getenv('ENCRYPTION_KEY')),
-            "encryption_test": "success" if decrypted == test_value else "failed",
-            "test_encrypted_length": len(encrypted)
+            "redis_connected": True,
+            "api_keys_found": len(api_keys),
+            "keys": masked_keys,
+            "required_keys": {
+                "VITE_GOOGLE_MAPS_API_KEY": "VITE_GOOGLE_MAPS_API_KEY" in api_keys,
+                "VITE_GOOGLE_MAPS_MAP_ID": "VITE_GOOGLE_MAPS_MAP_ID" in api_keys
+            }
         }
     except Exception as e:
         return {
-            "encryption_key_set": bool(os.getenv('ENCRYPTION_KEY')),
-            "encryption_test": "failed",
+            "redis_connected": False,
             "error": str(e)
         }
 

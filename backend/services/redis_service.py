@@ -120,3 +120,66 @@ class RedisService:
             logger.debug(f"Session {session_id} TTL extended")
         except Exception as e:
             logger.error(f"Failed to extend session {session_id}: {str(e)}")
+    
+    async def get_api_key(self, key_name: str) -> Optional[str]:
+        """
+        Retrieve API key from Redis
+        
+        Args:
+            key_name: API key name (e.g., 'VITE_GOOGLE_MAPS_API_KEY')
+        
+        Returns:
+            API key value or None if not found
+        """
+        try:
+            key = f"api_key:{key_name}"
+            value = await self.client.get(key)
+            if value:
+                logger.debug(f"API key {key_name} retrieved from Redis")
+                return value
+            else:
+                logger.warning(f"API key {key_name} not found in Redis")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to retrieve API key {key_name}: {str(e)}")
+            return None
+    
+    async def set_api_key(self, key_name: str, key_value: str):
+        """
+        Store API key in Redis
+        
+        Args:
+            key_name: API key name
+            key_value: API key value
+        """
+        try:
+            key = f"api_key:{key_name}"
+            await self.client.set(key, key_value)
+            logger.info(f"API key {key_name} stored in Redis")
+        except Exception as e:
+            logger.error(f"Failed to store API key {key_name}: {str(e)}")
+            raise
+    
+    async def list_api_keys(self) -> Dict[str, str]:
+        """
+        List all API keys from Redis
+        
+        Returns:
+            Dictionary of key names and values
+        """
+        try:
+            pattern = "api_key:*"
+            keys = await self.client.keys(pattern)
+            
+            result = {}
+            for redis_key in keys:
+                key_name = redis_key.replace("api_key:", "")
+                value = await self.client.get(redis_key)
+                if value:
+                    result[key_name] = value
+            
+            logger.debug(f"Retrieved {len(result)} API keys from Redis")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list API keys: {str(e)}")
+            return {}
