@@ -106,12 +106,17 @@ async def get_google_maps_config():
     from services.admin_service import admin_service
     
     try:
+        logger.info("Attempting to retrieve Google Maps configuration...")
+        
         # Get the encrypted keys from storage
         maps_api_key = admin_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
+        logger.info(f"Maps API key retrieved: {'Found' if maps_api_key else 'Not found'}")
+        
         maps_map_id = admin_service.get_api_key("VITE_GOOGLE_MAPS_MAP_ID")
+        logger.info(f"Maps Map ID retrieved: {'Found' if maps_map_id else 'Not found'}")
         
         if not maps_api_key:
-            logger.warning("Google Maps API key not found")
+            logger.warning("Google Maps API key not found or failed to decrypt")
             raise HTTPException(status_code=503, detail="Google Maps API key not configured")
         
         config = {
@@ -121,11 +126,41 @@ async def get_google_maps_config():
             "version": "weekly"
         }
         
+        logger.info("Google Maps configuration retrieved successfully")
         return config
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error retrieving Google Maps config: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve Google Maps configuration")
+        logger.error(f"Error retrieving Google Maps config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve Google Maps configuration: {str(e)}")
+
+
+@app.get("/api/public/debug/encryption")
+async def debug_encryption():
+    """
+    Debug endpoint to check encryption service status
+    """
+    import os
+    from services.encryption_service import encryption_service
+    
+    try:
+        # Test encryption/decryption
+        test_value = "test123"
+        encrypted = encryption_service.encrypt(test_value)
+        decrypted = encryption_service.decrypt(encrypted)
+        
+        return {
+            "encryption_key_set": bool(os.getenv('ENCRYPTION_KEY')),
+            "encryption_test": "success" if decrypted == test_value else "failed",
+            "test_encrypted_length": len(encrypted)
+        }
+    except Exception as e:
+        return {
+            "encryption_key_set": bool(os.getenv('ENCRYPTION_KEY')),
+            "encryption_test": "failed",
+            "error": str(e)
+        }
 
 
 @app.get("/")
