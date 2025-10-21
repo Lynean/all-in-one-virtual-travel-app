@@ -68,9 +68,7 @@ class AdminService:
             with open(self.admin_file, "w") as f:
                 json.dump(admins, f, indent=2)
             
-            logger.warning(f"Created default admin user: {default_username} / {default_password}")
-            logger.warning("CHANGE DEFAULT CREDENTIALS IN PRODUCTION!")
-    
+        
     def verify_password_method(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash"""
         return verify_password(plain_password, hashed_password)
@@ -98,7 +96,6 @@ class AdminService:
             return token
             
         except Exception as e:
-            logger.error(f"Authentication error: {e}")
             return None
     
     def verify_token(self, token: str) -> Optional[str]:
@@ -108,10 +105,8 @@ class AdminService:
             username: str = payload.get("sub")
             return username
         except jwt.ExpiredSignatureError:
-            logger.warning("Token expired")
             return None
         except jwt.JWTError as e:
-            logger.error(f"Token verification error: {e}")
             return None
     
     def create_api_key(self, key_name: str, key_value: str, description: Optional[str] = None) -> APIKeyResponse:
@@ -138,7 +133,6 @@ class AdminService:
             return self._key_to_response(key_name, keys[key_name], key_value)
             
         except Exception as e:
-            logger.error(f"Error creating API key: {e}")
             raise
     
     def get_api_key(self, key_name: str) -> Optional[str]:
@@ -153,8 +147,7 @@ class AdminService:
             encrypted_value = keys[key_name]["encrypted_value"]
             return encryption_service.decrypt(encrypted_value)
             
-        except Exception as e:
-            logger.error(f"Error getting API key: {e}")
+        except Exception:
             return None
     
     def list_api_keys(self) -> List[APIKeyResponse]:
@@ -170,8 +163,7 @@ class AdminService:
             
             return result
             
-        except Exception as e:
-            logger.error(f"Error listing API keys: {e}")
+        except Exception:
             return []
     
     def delete_api_key(self, key_name: str) -> bool:
@@ -190,8 +182,7 @@ class AdminService:
             
             return False
             
-        except Exception as e:
-            logger.error(f"Error deleting API key: {e}")
+        except Exception:
             return False
     
     def _key_to_response(self, key_name: str, key_data: dict, decrypted_value: str) -> APIKeyResponse:

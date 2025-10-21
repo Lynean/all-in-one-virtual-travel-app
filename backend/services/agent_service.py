@@ -348,13 +348,11 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
         if not tasks:
             # No branches enabled, fall back to text
             tasks.append(self._execute_text_branch(user_query, context, chat_history))
-        
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             logger.error(f"Error in asyncio.gather: {e}", exc_info=True)
             return []
-        
         # Filter out exceptions
         valid_results = []
         for i, result in enumerate(results):
