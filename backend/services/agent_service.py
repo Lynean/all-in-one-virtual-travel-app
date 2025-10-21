@@ -162,7 +162,6 @@ Output ONLY valid JSON (no markdown, no explanations):
                         reasoning=branch_data.get('reasoning')
                     ))
                 
-                logger.info(f"✅ Branch decisions: {[f'{b.branch}({b.enabled})' for b in branches]}")
                 return branches
             else:
                 raise ValueError("No JSON found in response")
@@ -243,21 +242,16 @@ Now generate the checklist as JSON:"""
             response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Log the response for debugging
-            logger.info(f"Checklist LLM response length: {len(response_text)} chars")
             if not response_text or len(response_text.strip()) == 0:
-                logger.warning("⚠️ Checklist branch received empty response from LLM")
                 return {"success": False, "error": "Empty response from LLM"}
             
             # Log FULL response for debugging (not truncated)
-            logger.info(f"📋 Full checklist response:\n{response_text}")
             
             # Remove markdown code blocks if present
             if '```json' in response_text:
                 response_text = response_text.split('```json')[1].split('```')[0].strip()
-                logger.info("📝 Removed markdown JSON code block")
             elif '```' in response_text:
                 response_text = response_text.split('```')[1].split('```')[0].strip()
-                logger.info("📝 Removed markdown code block")
             
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
@@ -265,11 +259,9 @@ Now generate the checklist as JSON:"""
                 json_str = response_text[json_start:json_end]
                 
                 # Log the extracted JSON
-                logger.info(f"🔍 Extracted JSON ({len(json_str)} chars):\n{json_str}")
                 
                 try:
                     checklist_data = json.loads(json_str)
-                    logger.info(f"✅ Checklist branch: {checklist_data.get('title')} ({len(checklist_data.get('items', []))} items)")
                     return {"success": True, "data": checklist_data, "type": "checklist"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error: {parse_error}")
@@ -300,13 +292,10 @@ Now generate the checklist as JSON:"""
                         logger.error(f"❌ Failed to fix JSON: {fix_error}")
                     raise parse_error
             
-            logger.warning(f"⚠️ No JSON found in checklist response")
             return {"success": False, "error": "Could not parse checklist data - no JSON found"}
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error in checklist branch: {e}")
             return {"success": False, "error": f"JSON parsing error: {str(e)}"}
         except Exception as e:
-            logger.error(f"Error in checklist branch: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
     
     async def _execute_text_branch(
@@ -329,10 +318,8 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
         try:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
-            logger.info(f"💬 Text branch: Generated response ({len(response_text)} chars)")
             return {"success": True, "data": {"message": response_text}, "type": "text"}
         except Exception as e:
-            logger.error(f"Error in text branch: {e}")
             return {"success": False, "error": str(e)}
     
     async def _execute_branches(
@@ -347,7 +334,6 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
         tasks = []
         enabled_branches = [b for b in branches if b.enabled]
         
-        logger.info(f"🚀 Executing {len(enabled_branches)} branches: {[b.branch for b in enabled_branches]}")
         
         try:
             for branch in sorted(enabled_branches, key=lambda x: x.priority):

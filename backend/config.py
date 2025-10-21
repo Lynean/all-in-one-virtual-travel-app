@@ -5,8 +5,8 @@ import os
 
 class Settings(BaseSettings):
     # API Keys - Required
-    gemini_api_key: str
-    google_maps_api_key: str
+    gemini_api_key: str = ""
+    google_maps_api_key: str = ""
     
     # Frontend API Keys (VITE_ prefixed for frontend)
     vite_google_maps_api_key: str = ""

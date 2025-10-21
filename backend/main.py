@@ -40,37 +40,28 @@ async def lifespan(app: FastAPI):
     """Initialize services on startup, cleanup on shutdown"""
     global redis_service, agent_service
     
-    logger.info("🚀 Starting TravelMate AI Agent Backend (Gemini-Powered)...")
-    logger.info(f"📍 Environment: {settings.environment}")
-    logger.info(f"🔗 Redis URL: {settings.redis_url.split('@')[-1] if '@' in settings.redis_url else settings.redis_url}")
-    
     # Check critical environment variables
     import os
-    logger.info(f"🔧 PORT: {os.getenv('PORT', 'not set, using 8000')}")
-    logger.info(f"🔧 GEMINI_API_KEY: {'set' if os.getenv('GEMINI_API_KEY') else 'NOT SET'}")
-    logger.info(f"🔧 REDIS_URL: {'set' if os.getenv('REDIS_URL') else 'NOT SET'}")
     
     # Initialize Redis
     redis_service = RedisService()
     try:
         await redis_service.connect()
-        logger.info("✅ Redis connected successfully")
+        
     except Exception as e:
         redis_service = None
     
     # Initialize Agent Service with Gemini
     try:
         agent_service = AgentService(redis_service)
-        logger.info("✅ Gemini agent service initialized")
-        logger.info(f"🤖 Using model: {settings.primary_model}")
+        
     except Exception as e:
-        logger.info(f"Failed to initialize agent service: {e}")
+        
         raise
     
     yield
     
     # Cleanup
-    logger.info("🛑 Shutting down AI Agent Backend...")
     if redis_service:
         await redis_service.disconnect()
 
@@ -126,22 +117,16 @@ async def get_google_maps_config():
     Returns API key needed for Google Maps integration
     """
     try:
-        logger.info("Attempting to retrieve Google Maps configuration from Redis...")
         
         maps_api_key = None
         
         if redis_service and redis_service.client:
             # Try to get from Redis first
             maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
-            logger.info(f"Redis: Maps API key {'found' if maps_api_key else 'not found'}")
-        else:
-            logger.info("Redis service not available, checking environment variables...")
-        
         # Fallback to environment variables if Redis fails
         if not maps_api_key:
             import os
             maps_api_key = os.getenv("VITE_GOOGLE_MAPS_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY")
-            logger.info(f"Environment: Maps API key {'found' if maps_api_key else 'not found'}")
         
         if not maps_api_key:
             raise HTTPException(
@@ -155,7 +140,6 @@ async def get_google_maps_config():
             "version": "weekly"
         }
         
-        logger.info("Google Maps configuration retrieved successfully")
         return config
         
     except HTTPException:
@@ -211,7 +195,6 @@ async def debug_chat_validate(request_data: dict):
     Debug endpoint to validate chat request format
     """
     try:
-        logger.info(f"Debug chat validation - received data: {request_data}")
         
         # Try to validate the request
         chat_request = ChatRequest(**request_data)
@@ -304,10 +287,6 @@ async def chat(request: ChatRequest):
         ChatResponse with agent's response and any map actions
     """
     try:
-        logger.info(f"Chat request from user {request.user_id}, session {request.session_id}")
-        logger.info(f"Message received: '{request.message}'")
-        logger.info(f"Context: {request.context}")
-        
         # Validate required fields
         if not request.user_id:
             raise HTTPException(status_code=422, detail="user_id is required")
@@ -392,7 +371,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
         session_id: Session identifier
     """
     await websocket.accept()
-    logger.info(f"WebSocket connected: user {user_id}, session {session_id}")
     
     try:
         while True:
