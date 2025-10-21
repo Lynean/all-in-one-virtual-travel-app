@@ -21,14 +21,17 @@ class Settings(BaseSettings):
     environment: str = "production" if os.getenv("RAILWAY_ENVIRONMENT") else "development"
     log_level: str = "INFO"
     
-    # CORS - Support both local and deployed frontends
-    cors_origins: List[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-        "https://chatandbuildversion-1760972271223.chatand.build",
-    ]
+    # CORS - Support both local and deployed frontends  
+    @property
+    def cors_origins(self) -> List[str]:
+        if self.environment == "production":
+            return ["*"]  # Allow all origins in production
+        return [
+            "http://localhost:5173",
+            "http://localhost:3000", 
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+        ]
     
     # Session
     session_ttl: int = 86400  # 24 hours
