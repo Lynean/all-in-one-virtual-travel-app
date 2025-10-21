@@ -54,10 +54,9 @@ async def lifespan(app: FastAPI):
     # Initialize Agent Service with Gemini
     try:
         agent_service = AgentService(redis_service)
-        
     except Exception as e:
-        
-        raise
+        # Allow app to start without agent service
+        agent_service = None
     
     yield
     
