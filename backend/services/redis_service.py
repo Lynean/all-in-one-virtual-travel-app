@@ -17,17 +17,25 @@ class RedisService:
     async def connect(self):
         """Connect to Redis"""
         try:
+            # Parse Redis URL to handle Railway's format
+            redis_url = settings.redis_url
+            
+            # Railway Redis URLs include authentication in the URL
+            # Format: redis://default:password@host:port
             self.client = await redis.from_url(
-                settings.redis_url,
-                password=settings.redis_password if settings.redis_password else None,
+                redis_url,
                 encoding="utf-8",
-                decode_responses=True
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_keepalive=True,
+                health_check_interval=30
             )
+            
             # Test connection
             await self.client.ping()
-            logger.info("Redis connection established")
+            logger.info(f"✅ Redis connection established to {redis_url.split('@')[-1] if '@' in redis_url else redis_url}")
         except Exception as e:
-            logger.error(f"Redis connection failed: {str(e)}")
+            logger.error(f"❌ Redis connection failed: {str(e)}")
             raise
     
     async def disconnect(self):

@@ -1,70 +1,43 @@
+"""
+Encryption service for API keys
+"""
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.backends import default_backend
-import base64
 import os
-import logging
-
-logger = logging.getLogger(__name__)
-
+import base64
 
 class EncryptionService:
-    """Service for encrypting and decrypting API keys"""
-    
     def __init__(self):
-        # Get or generate encryption key
-        self.encryption_key = self._get_or_create_key()
-        self.cipher = Fernet(self.encryption_key)
+        # Get encryption key from environment or generate one
+        key = os.getenv('ENCRYPTION_KEY')
+        if not key:
+            # Generate a key (in production, set this as env variable!)
+            key = Fernet.generate_key().decode()
+            print(f"⚠️  WARNING: Using generated encryption key. Set ENCRYPTION_KEY env variable!")
+            print(f"Generated key: {key}")
+        
+        if isinstance(key, str):
+            key = key.encode()
+        
+        self.cipher = Fernet(key)
     
-    def _get_or_create_key(self) -> bytes:
-        """Get existing encryption key or create a new one"""
-        key_file = ".encryption_key"
-        
-        if os.path.exists(key_file):
-            with open(key_file, "rb") as f:
-                return f.read()
-        
-        # Generate new key
-        key = Fernet.generate_key()
-        
-        # Save key securely
-        with open(key_file, "wb") as f:
-            f.write(key)
-        
-        # Set restrictive permissions (Unix-like systems)
+    def encrypt(self, value: str) -> str:
+        """Encrypt a string value"""
         try:
-            os.chmod(key_file, 0o600)
+            encrypted = self.cipher.encrypt(value.encode())
+            return base64.b64encode(encrypted).decode()
         except Exception as e:
-            logger.warning(f"Could not set file permissions: {e}")
-        
-        logger.info("Generated new encryption key")
-        return key
-    
-    def encrypt(self, plaintext: str) -> str:
-        """Encrypt a string"""
-        try:
-            encrypted = self.cipher.encrypt(plaintext.encode())
-            return base64.urlsafe_b64encode(encrypted).decode()
-        except Exception as e:
-            logger.error(f"Encryption error: {e}")
+            print(f"Encryption error: {e}")
             raise
     
-    def decrypt(self, encrypted_text: str) -> str:
-        """Decrypt a string"""
+    def decrypt(self, encrypted_value: str) -> str:
+        """Decrypt an encrypted string"""
         try:
-            encrypted_bytes = base64.urlsafe_b64decode(encrypted_text.encode())
-            decrypted = self.cipher.decrypt(encrypted_bytes)
+            decoded = base64.b64decode(encrypted_value.encode())
+            decrypted = self.cipher.decrypt(decoded)
             return decrypted.decode()
         except Exception as e:
-            logger.error(f"Decryption error: {e}")
+            print(f"Decryption error: {e}")
             raise
-    
-    def mask_key(self, key: str, visible_chars: int = 4) -> str:
-        """Mask an API key for display"""
-        if len(key) <= visible_chars:
-            return "*" * len(key)
-        return key[:visible_chars] + "*" * (len(key) - visible_chars)
 
-
+# Singleton instance
 encryption_service = EncryptionService()

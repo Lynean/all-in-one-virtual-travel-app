@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import List
+import os
 
 
 class Settings(BaseSettings):
@@ -12,14 +13,22 @@ class Settings(BaseSettings):
     exchangerate_api_key: str = ""
     google_translate_api_key: str = ""
     
-    # Redis
-    redis_url: str = "redis://localhost:6379"
+    # Redis - Railway provides REDIS_URL, fallback to localhost for local dev
+    redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     redis_password: str = ""
     
-    # Application
-    environment: str = "development"
+    # Application - Auto-detect Railway environment
+    environment: str = "production" if os.getenv("RAILWAY_ENVIRONMENT") else "development"
     log_level: str = "INFO"
-    cors_origins: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    
+    # CORS - Support both local and deployed frontends
+    cors_origins: List[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "https://chatandbuildversion-1760972271223.chatand.build",
+    ]
     
     # Session
     session_ttl: int = 86400  # 24 hours
@@ -36,6 +45,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        # Allow Railway environment variables to override .env
+        env_file_encoding = 'utf-8'
 
 
 settings = Settings()

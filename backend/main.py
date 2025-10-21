@@ -38,26 +38,29 @@ async def lifespan(app: FastAPI):
     """Initialize services on startup, cleanup on shutdown"""
     global redis_service, agent_service
     
-    logger.info("Starting TravelMate AI Agent Backend (Gemini-Powered)...")
+    logger.info("🚀 Starting TravelMate AI Agent Backend (Gemini-Powered)...")
+    logger.info(f"📍 Environment: {settings.environment}")
+    logger.info(f"🔗 Redis URL: {settings.redis_url.split('@')[-1] if '@' in settings.redis_url else settings.redis_url}")
     
-    # Initialize Redis (optional)
+    # Initialize Redis
     redis_service = RedisService()
     try:
         await redis_service.connect()
-        logger.info("✅ Redis connected")
+        logger.info("✅ Redis connected successfully")
     except Exception as e:
-        logger.warning(f"⚠️ Redis connection failed: {e}")
-        logger.warning("⚠️ Running without Redis (sessions will use in-memory storage)")
+        logger.warning(f"⚠️  Redis connection failed: {e}")
+        logger.warning("⚠️  Running without Redis (sessions will use in-memory storage)")
         redis_service = None
     
     # Initialize Agent Service with Gemini
     agent_service = AgentService(redis_service)
     logger.info("✅ Gemini agent service initialized")
+    logger.info(f"🤖 Using model: {settings.primary_model}")
     
     yield
     
     # Cleanup
-    logger.info("Shutting down AI Agent Backend...")
+    logger.info("🛑 Shutting down AI Agent Backend...")
     if redis_service:
         await redis_service.disconnect()
 
@@ -69,30 +72,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add middleware to handle private network access from public sites
-@app.middleware("http")
-async def add_private_network_access_headers(request, call_next):
-    response = await call_next(request)
-    # Allow requests from public sites to private networks (for development)
-    response.headers["Access-Control-Allow-Private-Network"] = "true"
-    return response
+# Add middleware to handle private network access (only for development)
+if settings.environment == "development":
+    @app.middleware("http")
+    async def add_private_network_access_headers(request, call_next):
+        response = await call_next(request)
+        # Allow requests from public sites to private networks (for development)
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
 
 # CORS middleware - MUST be before routes
 # Configured to allow requests from specific external domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://chatandbuildversion-1760972271223.chatand.build",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,  # Allow credentials for specified origins
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"],  # Expose all headers to the client
-    max_age=3600  # Cache preflight requests for 1 hour
+    allow_origins=settings.cors_origins,  # Use origins from config
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600
 )
 
 # Include admin router
