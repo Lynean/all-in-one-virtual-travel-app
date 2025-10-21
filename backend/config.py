@@ -3,12 +3,14 @@ from typing import List
 
 
 class Settings(BaseSettings):
-    # API Keys
+    # API Keys - Required
     gemini_api_key: str
-    openweather_api_key: str
-    exchangerate_api_key: str
-    google_translate_api_key: str
     google_maps_api_key: str
+    
+    # API Keys - Optional (not currently used in the app)
+    openweather_api_key: str = ""
+    exchangerate_api_key: str = ""
+    google_translate_api_key: str = ""
     
     # Redis
     redis_url: str = "redis://localhost:6379"
