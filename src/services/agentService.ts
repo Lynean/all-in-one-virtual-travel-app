@@ -1,179 +1,161 @@
-import axios from 'axios';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+import { ChecklistAppAction } from '../types/checklist';
 
 export interface AgentContext {
-  current_location?: {
-    lat: number;
-    lng: number;
-    name?: string;
-  };
+  location?: string;
+  preferences?: string;
+  current_location?: { lat: number; lng: number };
   location_confirmed?: boolean;
-  budget?: string;
   destination?: string;
-}
-
-export interface MapAction {
-  type: 'search' | 'directions' | 'marker' | 'zoom';
-  data: {
-    query?: string;
-    location?: { lat: number; lng: number };
-    zoom?: number;
-    label?: string;
-  };
-}
-
-export interface AppAction {
-  type: string;
-  data: any;
 }
 
 export interface AgentResponse {
   session_id: string;
   message: string;
-  map_actions: MapAction[];
-  app_actions: AppAction[];  // Added app_actions field
-  metadata?: {
-    location_confirmed?: boolean;
+  map_actions: any[];
+  app_actions: (ChecklistAppAction | any)[];
+  clarifications: string[];
+  suggestions: string[];
+  metadata: {
+    model: string;
+    phase: string;
+    branches_executed: string[];
   };
   timestamp: string;
 }
 
-export interface SessionResponse {
-  session_id: string;
-  user_id: string;
-  status: string;
-  created_at?: string;
-}
-
 class AgentService {
+  private backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://all-in-one-virtual-travel-guide-production.up.railway.app';
+  private sessionId: string;
   private userId: string;
-  private sessionId: string | null = null;
 
   constructor() {
-    // Generate or retrieve user ID
-    this.userId = this.getUserId();
-  }
-
-  private getUserId(): string {
-    let userId = localStorage.getItem('travelmate_user_id');
+    // Get or create user ID from localStorage
+    let userId = localStorage.getItem('travel_guide_user_id');
     if (!userId) {
       userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      localStorage.setItem('travelmate_user_id', userId);
+      localStorage.setItem('travel_guide_user_id', userId);
     }
-    return userId;
+    this.userId = userId;
+
+    // Get or create session ID from localStorage
+    let sessionId = localStorage.getItem('travel_guide_session_id');
+    if (!sessionId) {
+      sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('travel_guide_session_id', sessionId);
+    }
+    this.sessionId = sessionId;
+
+    console.log('🔑 Agent Service initialized:', { userId: this.userId, sessionId: this.sessionId });
   }
 
-  async createSession(metadata?: Record<string, any>): Promise<string> {
+  async sendMessage(message: string, context?: AgentContext): Promise<AgentResponse> {
     try {
-      const response = await axios.post<SessionResponse>(
-        `${BACKEND_URL}/api/session/create`,
-        {
-          user_id: this.userId,
-          metadata: metadata || {}
+      console.log('📤 Sending message to agent:', { message, context });
+
+      // Prepare context with location and preferences
+      const requestContext: { location?: string; preferences?: string } = {};
+      
+      if (context) {
+        // Format location data if available
+        if (context.current_location) {
+          requestContext.location = `${context.current_location.lat},${context.current_location.lng}`;
+        } else if (context.location) {
+          requestContext.location = context.location;
         }
-      );
-      
-      this.sessionId = response.data.session_id;
-      localStorage.setItem('travelmate_session_id', this.sessionId);
-      
-      return this.sessionId;
-    } catch (error) {
-      console.error('Failed to create session:', error);
-      throw error;
-    }
-  }
 
-  async getOrCreateSession(): Promise<string> {
-    if (this.sessionId) {
-      return this.sessionId;
-    }
+        // Add preferences if available
+        if (context.preferences) {
+          requestContext.preferences = context.preferences;
+        }
 
-    // Try to retrieve from localStorage
-    const storedSessionId = localStorage.getItem('travelmate_session_id');
-    if (storedSessionId) {
-      this.sessionId = storedSessionId;
-      return storedSessionId;
-    }
+        // Add destination as preference if available
+        if (context.destination) {
+          requestContext.preferences = requestContext.preferences 
+            ? `${requestContext.preferences}, destination: ${context.destination}`
+            : `destination: ${context.destination}`;
+        }
+      }
 
-    // Create new session
-    return await this.createSession();
-  }
+      // CRITICAL: Backend REQUIRES session_id in ALL requests
+      const requestBody = {
+        user_id: this.userId,
+        session_id: this.sessionId,
+        message,
+        context: requestContext,
+      };
 
-  async sendMessage(
-    message: string,
-    context?: AgentContext
-  ): Promise<AgentResponse> {
-    try {
-      const sessionId = await this.getOrCreateSession();
+      console.log('📦 Request body:', requestBody);
 
-      const response = await axios.post<AgentResponse>(
-        `${BACKEND_URL}/api/chat`,
-        {
-          user_id: this.userId,
-          session_id: sessionId,
-          message,
-          context: context || {}
+      const response = await fetch(`${this.backendUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          timeout: 30000 // 30 second timeout
-        }
-      );
+        body: JSON.stringify(requestBody),
+      });
 
-      return response.data;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Agent service error:', errorText);
+        throw new Error(`Agent service error: ${response.status}`);
+      }
+
+      const data: AgentResponse = await response.json();
+      console.log('✅ Agent response:', data);
+
+      // Update session ID if backend provides a new one
+      if (data.session_id && data.session_id !== this.sessionId) {
+        console.log('🔄 Updating session ID:', data.session_id);
+        this.sessionId = data.session_id;
+        localStorage.setItem('travel_guide_session_id', data.session_id);
+      }
+
+      return data;
     } catch (error) {
-      console.error('Agent service error:', error);
+      console.error('❌ Failed to send message:', error);
       throw error;
     }
   }
 
   async deleteSession(): Promise<void> {
-    if (!this.sessionId) return;
-
     try {
-      await axios.delete(
-        `${BACKEND_URL}/api/session/${this.sessionId}`,
-        {
-          params: { user_id: this.userId }
-        }
-      );
+      console.log('🗑️ Deleting session:', this.sessionId);
 
-      this.sessionId = null;
-      localStorage.removeItem('travelmate_session_id');
+      const response = await fetch(`${this.backendUrl}/api/session/${this.sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to delete session:', response.statusText);
+      } else {
+        console.log('✅ Session deleted successfully');
+      }
     } catch (error) {
-      console.error('Failed to delete session:', error);
-      throw error;
+      console.error('❌ Error deleting session:', error);
+    } finally {
+      // Generate new session ID after deletion
+      this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('travel_guide_session_id', this.sessionId);
+      console.log('🆕 New session ID generated:', this.sessionId);
     }
   }
 
-  // WebSocket support for real-time communication
-  createWebSocket(
-    onMessage: (response: AgentResponse) => void,
-    onError?: (error: Event) => void
-  ): WebSocket | null {
-    if (!this.sessionId) {
-      console.error('No session ID available for WebSocket');
-      return null;
-    }
+  clearSession() {
+    // Generate new session ID
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('travel_guide_session_id', this.sessionId);
+    console.log('🆕 Session cleared, new ID:', this.sessionId);
+  }
 
-    const wsUrl = BACKEND_URL.replace('http', 'ws');
-    const ws = new WebSocket(`${wsUrl}/ws/${this.userId}/${this.sessionId}`);
+  getUserId(): string {
+    return this.userId;
+  }
 
-    ws.onmessage = (event) => {
-      try {
-        const response: AgentResponse = JSON.parse(event.data);
-        onMessage(response);
-      } catch (error) {
-        console.error('WebSocket message parse error:', error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      if (onError) onError(error);
-    };
-
-    return ws;
+  getSessionId(): string {
+    return this.sessionId;
   }
 }
 

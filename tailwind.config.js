@@ -7,6 +7,8 @@ export default {
   theme: {
     extend: {
       colors: {
+        background: '#f8fafc',
+        foreground: '#1e293b',
         neuro: {
           bg: '#e0e5ec',
           text: '#4a5568',

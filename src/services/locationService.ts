@@ -10,6 +10,7 @@ export interface UserLocation {
   name: string;
   lat: number;
   lng: number;
+  address: string; // FIXED: Made required
   accuracy?: number;
   timestamp: number;
 }
@@ -148,6 +149,7 @@ class LocationService {
 
     // Try to get human-readable location name
     let locationName = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    let address = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
     
     try {
       const geocodeResult = await reverseGeocode(latitude, longitude);
@@ -157,6 +159,8 @@ class LocationService {
                       geocodeResult.neighborhood || 
                       geocodeResult.formattedAddress ||
                       locationName;
+        
+        address = geocodeResult.formattedAddress || address;
       }
     } catch (error) {
       console.warn('Failed to reverse geocode location:', error);
@@ -167,6 +171,7 @@ class LocationService {
       name: locationName,
       lat: latitude,
       lng: longitude,
+      address,
       accuracy,
       timestamp: Date.now()
     };

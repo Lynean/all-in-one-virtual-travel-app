@@ -1,136 +1,434 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { Category, Expense, CategoryFormData } from '../types/budget';
+import { migrateLegacyData, needsMigration } from '../utils/budgetMigration';
+
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  suggestions?: string[];
+}
 
 export interface ChecklistItem {
   id: string;
   text: string;
   completed: boolean;
-  category: 'before' | 'arrival' | 'during' | 'departure';
+  category: 'before' | 'arrival' | 'during' | 'departure' | 'after';
 }
 
-export interface EmergencyContact {
-  country: string;
-  police: string;
-  ambulance: string;
-  fire: string;
-  touristHotline?: string;
+export interface AiChecklistItem {
+  text: string;
+  checked: boolean;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
+export interface AiChecklistCategory {
+  category: string;
+  items: AiChecklistItem[];
 }
 
-interface TravelStore {
-  destination: string;
-  setDestination: (dest: string) => void;
-  checklist: ChecklistItem[];
-  addChecklistItem: (item: Omit<ChecklistItem, 'id'>) => void;
-  toggleChecklistItem: (id: string) => void;
-  removeChecklistItem: (id: string) => void;
-  updateChecklistItem: (id: string, text: string) => void;
-  chatHistory: ChatMessage[];
-  addMessage: (role: 'user' | 'assistant', content: string) => void;
-  clearChat: () => void;
-  currentLocation: { lat: number; lng: number } | null;
-  setCurrentLocation: (location: { lat: number; lng: number } | null) => void;
+export interface AiChecklistData {
+  title: string;
+  categories: AiChecklistCategory[];
+}
+
+export interface Location {
+  lat: number;
+  lng: number;
+  address: string;
+}
+
+interface Store {
+  // Chat state
+  messages: Message[];
+  addMessage: (role: 'user' | 'assistant', content: string, suggestions?: string[]) => void;
+  clearMessages: () => void;
+  chatHistory: Message[];
+
+  // Location state
+  currentLocation: Location | null;
+  setCurrentLocation: (location: Location | null) => void;
   currentLocationName: string | null;
   setCurrentLocationName: (name: string | null) => void;
-  userProvidedLocation: { lat: number; lng: number; name: string } | null;
-  setUserProvidedLocation: (location: { lat: number; lng: number; name: string } | null) => void;
-  mapInstance: google.maps.Map | null;
-  setMapInstance: (map: google.maps.Map | null) => void;
   locationConfirmed: boolean;
   setLocationConfirmed: (confirmed: boolean) => void;
-  pendingSearchQuery: string | null;
-  setPendingSearchQuery: (query: string | null) => void;
-  awaitingLandmarks: boolean;
-  setAwaitingLandmarks: (awaiting: boolean) => void;
-  pendingLocationVerification: { 
-    userLocation: { lat: number; lng: number; name: string };
-    mapLocation: { lat: number; lng: number; name: string };
-    distance: number;
-  } | null;
-  setPendingLocationVerification: (verification: { 
-    userLocation: { lat: number; lng: number; name: string };
-    mapLocation: { lat: number; lng: number; name: string };
-    distance: number;
-  } | null) => void;
+
+  // Origin state
+  origin: Location | null;
+  setOrigin: (location: Location | null) => void;
+  originLocation: Location | null;
+  setOriginLocation: (location: Location | null) => void;
+
+  // Map state
+  mapInstance: google.maps.Map | null;
+  setMapInstance: (map: google.maps.Map | null) => void;
+
+  // Manual Checklist state
+  checklistItems: ChecklistItem[];
+  addChecklistItem: (item: Omit<ChecklistItem, 'id'>) => void;
+  removeChecklistItem: (id: string) => void;
+  toggleChecklistItem: (id: string) => void;
+  updateChecklistItem: (id: string, text: string) => void;
+  clearChecklist: () => void;
+
+  // AI Checklist state
+  aiChecklist: AiChecklistData | null;
+  setAiChecklist: (data: AiChecklistData) => void;
+  toggleAiChecklistItem: (categoryIndex: number, itemIndex: number) => void;
+  clearAiChecklist: () => void;
+  addManualChecklistItem: (categoryName: string, itemText: string) => void;
+  addManualCategory: (categoryName: string, itemText: string) => void;
+
+  // Budget state - REFACTORED
+  startingBudget: number;
+  setStartingBudget: (amount: number) => void;
+  categories: Category[];
+  addCategory: (categoryData: CategoryFormData) => Category;
+  updateCategory: (categoryId: string, categoryData: Partial<CategoryFormData>) => void;
+  deleteCategory: (categoryId: string) => void;
+  getCategoryById: (categoryId: string) => Category | undefined;
+  expenses: Expense[];
+  addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>) => void;
+  updateExpense: (expenseId: string, updates: Partial<Omit<Expense, 'id' | 'createdAt'>>) => void;
+  deleteExpense: (expenseId: string) => void;
+  reassignExpenses: (oldCategoryId: string, newCategoryId: string) => void;
+  clearBudget: () => void;
+
+  // Dashboard state
+  checklist: ChecklistItem[];
+  destination: string | null;
 }
 
-export const useStore = create<TravelStore>()(
+export const useStore = create<Store>()(
   persist(
-    (set) => ({
-      destination: '',
-      setDestination: (dest) => set({ destination: dest }),
-      checklist: [],
-      addChecklistItem: (item) =>
-        set((state) => {
-          const newItem = { ...item, id: `${Date.now()}-${Math.random()}` };
-          console.log('🔄 Store: Adding checklist item:', newItem);
-          console.log('🔄 Store: Current checklist length:', state.checklist.length);
-          const newChecklist = [...state.checklist, newItem];
-          console.log('🔄 Store: New checklist length:', newChecklist.length);
-          return { checklist: newChecklist };
-        }),
-      toggleChecklistItem: (id) =>
-        set((state) => {
-          console.log('Toggling item with id:', id);
-          console.log('Current checklist:', state.checklist);
-          
-          const updatedChecklist = state.checklist.map((item) => {
-            if (item.id === id) {
-              console.log('Found matching item:', item);
-              return { ...item, completed: !item.completed };
-            }
-            return item;
-          });
-          
-          console.log('Updated checklist:', updatedChecklist);
-          return { checklist: updatedChecklist };
-        }),
-      removeChecklistItem: (id) =>
+    (set, get) => ({
+      // Chat state
+      messages: [],
+      addMessage: (role, content, suggestions) =>
         set((state) => ({
-          checklist: state.checklist.filter((item) => item.id !== id),
+          messages: [
+            ...state.messages,
+            {
+              id: Date.now().toString(),
+              role,
+              content,
+              timestamp: new Date(),
+              suggestions,
+            },
+          ],
+          chatHistory: [
+            ...state.messages,
+            {
+              id: Date.now().toString(),
+              role,
+              content,
+              timestamp: new Date(),
+              suggestions,
+            },
+          ],
         })),
-      updateChecklistItem: (id, text) =>
-        set((state) => ({
-          checklist: state.checklist.map((item) =>
-            item.id === id ? { ...item, text } : item
-          ),
-        })),
+      clearMessages: () => set({ messages: [], chatHistory: [] }),
       chatHistory: [],
-      addMessage: (role, content) =>
-        set((state) => ({
-          chatHistory: [...state.chatHistory, { role, content, timestamp: new Date() }],
-        })),
-      clearChat: () => set({ chatHistory: [] }),
+
+      // Location state
       currentLocation: null,
       setCurrentLocation: (location) => set({ currentLocation: location }),
       currentLocationName: null,
       setCurrentLocationName: (name) => set({ currentLocationName: name }),
-      userProvidedLocation: null,
-      setUserProvidedLocation: (location) => set({ userProvidedLocation: location }),
-      mapInstance: null,
-      setMapInstance: (map) => set({ mapInstance: map }),
       locationConfirmed: false,
       setLocationConfirmed: (confirmed) => set({ locationConfirmed: confirmed }),
-      pendingSearchQuery: null,
-      setPendingSearchQuery: (query) => set({ pendingSearchQuery: query }),
-      awaitingLandmarks: false,
-      setAwaitingLandmarks: (awaiting) => set({ awaitingLandmarks: awaiting }),
-      pendingLocationVerification: null,
-      setPendingLocationVerification: (verification) => set({ pendingLocationVerification: verification }),
+
+      // Origin state
+      origin: null,
+      setOrigin: (location) => set({ origin: location, originLocation: location }),
+      originLocation: null,
+      setOriginLocation: (location) => set({ originLocation: location, origin: location }),
+
+      // Map state
+      mapInstance: null,
+      setMapInstance: (map) => set({ mapInstance: map }),
+
+      // Manual Checklist state
+      checklistItems: [],
+      addChecklistItem: (item) =>
+        set((state) => ({
+          checklistItems: [
+            ...state.checklistItems,
+            { ...item, id: Date.now().toString() },
+          ],
+          checklist: [
+            ...state.checklistItems,
+            { ...item, id: Date.now().toString() },
+          ],
+        })),
+      removeChecklistItem: (id) =>
+        set((state) => ({
+          checklistItems: state.checklistItems.filter((item) => item.id !== id),
+          checklist: state.checklistItems.filter((item) => item.id !== id),
+        })),
+      toggleChecklistItem: (id) =>
+        set((state) => {
+          const updated = state.checklistItems.map((item) =>
+            item.id === id ? { ...item, completed: !item.completed } : item
+          );
+          return {
+            checklistItems: updated,
+            checklist: updated,
+          };
+        }),
+      updateChecklistItem: (id, text) =>
+        set((state) => {
+          const updated = state.checklistItems.map((item) =>
+            item.id === id ? { ...item, text } : item
+          );
+          return {
+            checklistItems: updated,
+            checklist: updated,
+          };
+        }),
+      clearChecklist: () => set({ checklistItems: [], checklist: [] }),
+
+      // AI Checklist state
+      aiChecklist: null,
+      setAiChecklist: (data) => set({ aiChecklist: data }),
+      toggleAiChecklistItem: (categoryIndex, itemIndex) =>
+        set((state) => {
+          if (!state.aiChecklist) return state;
+          
+          const newCategories = [...state.aiChecklist.categories];
+          const category = { ...newCategories[categoryIndex] };
+          const items = [...category.items];
+          items[itemIndex] = {
+            ...items[itemIndex],
+            checked: !items[itemIndex].checked,
+          };
+          category.items = items;
+          newCategories[categoryIndex] = category;
+
+          return {
+            aiChecklist: {
+              ...state.aiChecklist,
+              categories: newCategories,
+            },
+          };
+        }),
+      clearAiChecklist: () => set({ aiChecklist: null }),
+      
+      addManualChecklistItem: (categoryName, itemText) =>
+        set((state) => {
+          if (!state.aiChecklist) {
+            return {
+              aiChecklist: {
+                title: 'My Travel Checklist',
+                categories: [
+                  {
+                    category: categoryName,
+                    items: [{ text: itemText, checked: false }],
+                  },
+                ],
+              },
+            };
+          }
+
+          const categoryIndex = state.aiChecklist.categories.findIndex(
+            (cat) => cat.category === categoryName
+          );
+
+          if (categoryIndex === -1) {
+            return {
+              aiChecklist: {
+                ...state.aiChecklist,
+                categories: [
+                  ...state.aiChecklist.categories,
+                  {
+                    category: categoryName,
+                    items: [{ text: itemText, checked: false }],
+                  },
+                ],
+              },
+            };
+          }
+
+          const newCategories = [...state.aiChecklist.categories];
+          newCategories[categoryIndex] = {
+            ...newCategories[categoryIndex],
+            items: [
+              ...newCategories[categoryIndex].items,
+              { text: itemText, checked: false },
+            ],
+          };
+
+          return {
+            aiChecklist: {
+              ...state.aiChecklist,
+              categories: newCategories,
+            },
+          };
+        }),
+
+      addManualCategory: (categoryName, itemText) =>
+        set((state) => {
+          if (!state.aiChecklist) {
+            return {
+              aiChecklist: {
+                title: 'My Travel Checklist',
+                categories: [
+                  {
+                    category: categoryName,
+                    items: [{ text: itemText, checked: false }],
+                  },
+                ],
+              },
+            };
+          }
+
+          return {
+            aiChecklist: {
+              ...state.aiChecklist,
+              categories: [
+                ...state.aiChecklist.categories,
+                {
+                  category: categoryName,
+                  items: [{ text: itemText, checked: false }],
+                },
+              ],
+            },
+          };
+        }),
+
+      // Budget state - REFACTORED
+      startingBudget: 0,
+      setStartingBudget: (amount) => set({ startingBudget: amount }),
+      
+      categories: [],
+      
+      addCategory: (categoryData) => {
+        const now = new Date().toISOString();
+        const newCategory: Category = {
+          id: `cat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: categoryData.name,
+          description: categoryData.description,
+          color: categoryData.color,
+          icon: categoryData.icon,
+          allocated: categoryData.allocated,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        set((state) => ({
+          categories: [...state.categories, newCategory],
+        }));
+
+        return newCategory;
+      },
+
+      updateCategory: (categoryId, categoryData) => {
+        set((state) => ({
+          categories: state.categories.map((cat) =>
+            cat.id === categoryId
+              ? {
+                  ...cat,
+                  ...categoryData,
+                  updatedAt: new Date().toISOString(),
+                }
+              : cat
+          ),
+        }));
+      },
+
+      deleteCategory: (categoryId) => {
+        set((state) => ({
+          categories: state.categories.filter((cat) => cat.id !== categoryId),
+          // Also remove expenses associated with this category
+          expenses: state.expenses.filter((exp) => exp.categoryId !== categoryId),
+        }));
+      },
+
+      getCategoryById: (categoryId) => {
+        return get().categories.find((cat) => cat.id === categoryId);
+      },
+
+      expenses: [],
+      
+      addExpense: (expense) => {
+        const now = new Date().toISOString();
+        const newExpense: Expense = {
+          ...expense,
+          id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          createdAt: now,
+        };
+
+        set((state) => ({
+          expenses: [...state.expenses, newExpense],
+        }));
+      },
+
+      updateExpense: (expenseId, updates) => {
+        set((state) => ({
+          expenses: state.expenses.map((exp) =>
+            exp.id === expenseId ? { ...exp, ...updates } : exp
+          ),
+        }));
+      },
+
+      deleteExpense: (expenseId) => {
+        set((state) => ({
+          expenses: state.expenses.filter((exp) => exp.id !== expenseId),
+        }));
+      },
+
+      reassignExpenses: (oldCategoryId, newCategoryId) => {
+        set((state) => ({
+          expenses: state.expenses.map((exp) =>
+            exp.categoryId === oldCategoryId
+              ? { ...exp, categoryId: newCategoryId }
+              : exp
+          ),
+        }));
+      },
+
+      clearBudget: () =>
+        set({
+          expenses: [],
+          categories: [],
+        }),
+
+      // Dashboard state
+      checklist: [],
+      destination: null,
     }),
     {
       name: 'travel-guide-storage',
+      version: 2, // Increment version for migration
+      migrate: (persistedState: any, version: number) => {
+        // Handle migration from version 1 to version 2
+        if (version === 1 && needsMigration(persistedState)) {
+          const { categories, expenses } = migrateLegacyData(
+            persistedState.expenses || [],
+            persistedState.categoryAllocations || {}
+          );
+
+          return {
+            ...persistedState,
+            categories,
+            expenses,
+            // Remove legacy fields
+            categoryAllocations: undefined,
+          };
+        }
+
+        return persistedState;
+      },
       partialize: (state) => ({
-        chatHistory: state.chatHistory,
-        currentLocationName: state.currentLocationName,
-        locationConfirmed: state.locationConfirmed,
-        userProvidedLocation: state.userProvidedLocation,
-        checklist: state.checklist,  // Persist checklist items
+        origin: state.origin,
+        originLocation: state.originLocation,
+        checklistItems: state.checklistItems,
+        checklist: state.checklist,
+        aiChecklist: state.aiChecklist,
+        startingBudget: state.startingBudget,
+        categories: state.categories,
+        expenses: state.expenses,
       }),
     }
   )

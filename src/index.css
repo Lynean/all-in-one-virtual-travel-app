@@ -1,131 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
+@layer base {
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
 
-body {
-  margin: 0;
-  padding: 0;
-  background: #e0e5ec;
-  color: #4a5568;
-  overflow-x: hidden;
+  /* Custom scrollbar styles */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    border-radius: 10px;
+    border: 2px solid #f1f5f9;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+  }
+
+  /* Firefox scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3b82f6 #f1f5f9;
+  }
 }
 
 @layer utilities {
-  .neuro-element {
-    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
-    box-shadow: 8px 8px 16px #a3b1c6, -8px -8px 16px #ffffff;
-    border-radius: 20px;
-    transition: all 0.3s ease;
+  /* Neuro-AI Design System Colors */
+  .bg-neuro-bg {
+    background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%);
   }
   
-  .neuro-element-sm {
-    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
-    box-shadow: 4px 4px 8px #a3b1c6, -4px -4px 8px #ffffff;
-    border-radius: 15px;
-    transition: all 0.3s ease;
+  .bg-neuro-checklist-bg {
+    background: linear-gradient(135deg, #fff5f5 0%, #ffe8e8 100%);
   }
   
-  .neuro-element-lg {
-    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
-    box-shadow: 12px 12px 24px #a3b1c6, -12px -12px 24px #ffffff;
-    border-radius: 25px;
-    transition: all 0.3s ease;
+  .bg-neuro-map-bg {
+    background: linear-gradient(135deg, #f0fff4 0%, #e8f5e9 100%);
   }
   
-  .neuro-inset {
-    background: linear-gradient(145deg, #d9dfe8, #e6ebf2);
-    box-shadow: inset 8px 8px 16px #a3b1c6, inset -8px -8px 16px #ffffff;
-    border-radius: 20px;
+  .bg-neuro-emergency-bg {
+    background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
   }
   
-  .neuro-button {
-    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
-    box-shadow: 8px 8px 16px #a3b1c6, -8px -8px 16px #ffffff;
-    border-radius: 15px;
-    transition: all 0.2s ease;
+  .bg-neuro-ai-bg {
+    @apply bg-gradient-to-br from-gray-50 to-gray-100;
   }
   
-  .neuro-button:hover {
-    box-shadow: 6px 6px 12px #a3b1c6, -6px -6px 12px #ffffff;
-    transform: translateY(-2px);
+  .bg-neuro-ai-card {
+    @apply bg-white;
   }
   
-  .neuro-button:active {
-    box-shadow: inset 4px 4px 8px #a3b1c6, inset -4px -4px 8px #ffffff;
-    transform: translateY(0);
+  .text-neuro-ai-text {
+    @apply text-gray-900;
   }
   
-  .neuro-input {
-    background: linear-gradient(145deg, #d9dfe8, #e6ebf2);
-    box-shadow: inset 6px 6px 12px #a3b1c6, inset -6px -6px 12px #ffffff;
-    border-radius: 15px;
-    border: none;
-    outline: none;
-    transition: all 0.3s ease;
+  .text-neuro-ai-textLight {
+    @apply text-gray-600;
   }
   
-  .neuro-input:focus {
-    box-shadow: inset 8px 8px 16px #a3b1c6, inset -8px -8px 16px #ffffff;
+  .bg-neuro-accent {
+    @apply bg-blue-600;
   }
   
-  .neuro-card {
-    background: linear-gradient(145deg, #e6ebf2, #d9dfe8);
-    box-shadow: 10px 10px 20px #a3b1c6, -10px -10px 20px #ffffff;
-    border-radius: 20px;
-    transition: all 0.3s ease;
+  .bg-neuro-accentLight {
+    @apply bg-blue-500;
   }
   
-  .neuro-card:hover {
-    box-shadow: 12px 12px 24px #a3b1c6, -12px -12px 24px #ffffff;
-    transform: translateY(-3px);
+  .text-neuro-accent {
+    @apply text-blue-600;
   }
-}
+  
+  /* Neuro-AI Shadows */
+  .shadow-neuro-ai {
+    box-shadow: 
+      0 10px 25px -5px rgba(59, 130, 246, 0.15),
+      0 8px 10px -6px rgba(59, 130, 246, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  
+  .shadow-neuro-ai-sm {
+    box-shadow: 
+      0 4px 12px -2px rgba(59, 130, 246, 0.12),
+      0 2px 4px -1px rgba(59, 130, 246, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  }
+  
+  .shadow-neuro-hover {
+    box-shadow: 
+      0 15px 35px -5px rgba(59, 130, 246, 0.2),
+      0 10px 15px -6px rgba(59, 130, 246, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  
+  .shadow-neuro-active {
+    box-shadow: 
+      0 5px 15px -3px rgba(59, 130, 246, 0.15),
+      0 3px 6px -2px rgba(59, 130, 246, 0.1),
+      inset 0 2px 4px rgba(0, 0, 0, 0.06);
+  }
+  
+  .shadow-neuro-inset {
+    box-shadow: 
+      inset 0 2px 4px rgba(0, 0, 0, 0.06),
+      inset 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #d9dfe8;
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(145deg, #a3b1c6, #8a9bb3);
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(145deg, #8a9bb3, #7a8ba3);
-}
-
-/* Accessibility improvements */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  /* Animations */
+  @keyframes slide-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
-}
 
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-  .neuro-element,
-  .neuro-button,
-  .neuro-card {
-    border: 2px solid #4a5568;
+  @keyframes pulse-slow {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.8;
+    }
   }
-}
 
-/* Mobile optimizations */
-@media (max-width: 1024px) {
-  body {
-    overflow-x: hidden;
+  .animate-slide-up {
+    animation: slide-up 0.3s ease-out;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }

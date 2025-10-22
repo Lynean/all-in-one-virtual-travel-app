@@ -17,14 +17,11 @@ import {
   type SearchTextRequest,
   type Place
 } from './placesApi';
+import { reverseGeocode } from './geocoding';
+import { Location } from '../store/useStore';
 
 let loaderInstance: Loader | null = null;
 let isLoaded = false;
-
-export interface Location {
-  lat: number;
-  lng: number;
-}
 
 export const getGoogleMapsLoader = async (): Promise<Loader> => {
   if (!loaderInstance) {
@@ -48,7 +45,7 @@ export const loadGoogleMaps = async (): Promise<void> => {
   isLoaded = true;
 };
 
-export const getCurrentLocation = (): Promise<Location> => {
+export const getCurrentLocation = async (): Promise<Location> => {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('Geolocation is not supported by your browser'));
@@ -56,10 +53,25 @@ export const getCurrentLocation = (): Promise<Location> => {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        
+        // Get address via reverse geocoding
+        let address = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        try {
+          const result = await reverseGeocode(lat, lng);
+          if (result?.formattedAddress) {
+            address = result.formattedAddress;
+          }
+        } catch (error) {
+          console.error('Geocoding error:', error);
+        }
+
         resolve({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
+          lat,
+          lng,
+          address,
         });
       },
       (error) => {
@@ -96,7 +108,7 @@ export const initializeMap = async (
     await loadGoogleMaps();
 
     const map = new google.maps.Map(element, {
-      center,
+      center: { lat: center.lat, lng: center.lng },
       zoom: 13,
       mapTypeControl: true,
       streetViewControl: true,
@@ -113,7 +125,7 @@ export const initializeMap = async (
 
     // Add marker for current location
     new google.maps.Marker({
-      position: center,
+      position: { lat: center.lat, lng: center.lng },
       map,
       title: 'Your Location',
       animation: google.maps.Animation.DROP,
@@ -148,7 +160,7 @@ export const searchPlaces = async (
       maxResultCount: 20,
       locationBias: {
         circle: {
-          center: placesLatLngToLocation(location),
+          center: placesLatLngToLocation({ lat: location.lat, lng: location.lng }),
           radius: 5000
         }
       }
@@ -217,12 +229,12 @@ export const getDirections = async (
     const request: ComputeRoutesRequest = {
       origin: {
         location: {
-          latLng: latLngToLocation(origin)
+          latLng: latLngToLocation({ lat: origin.lat, lng: origin.lng })
         }
       },
       destination: {
         location: {
-          latLng: latLngToLocation(destination)
+          latLng: latLngToLocation({ lat: destination.lat, lng: destination.lng })
         }
       },
       travelMode: convertTravelMode(travelMode),

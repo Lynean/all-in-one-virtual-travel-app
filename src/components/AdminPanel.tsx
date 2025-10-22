@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Key, Eye, EyeOff, Save, Trash2, Plus, LogOut, AlertCircle } from 'lucide-react';
+import { Shield, Key, Eye, EyeOff, Save, Trash2, Plus, LogOut, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface APIKey {
   key_name: string;
@@ -31,7 +31,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
   const [newKeyDescription, setNewKeyDescription] = useState('');
   const [showKeyValue, setShowKeyValue] = useState(false);
 
-  const API_BASE = 'http://localhost:8000/api/admin';
+  const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://all-in-one-virtual-travel-guide-production.up.railway.app';
 
   useEffect(() => {
     const savedToken = localStorage.getItem('admin_token');
@@ -42,7 +42,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
 
   const verifyToken = async (tokenToVerify: string) => {
     try {
-      const response = await fetch(`${API_BASE}/verify`, {
+      const response = await fetch(`${API_BASE}/api/admin/verify`, {
         headers: {
           'Authorization': `Bearer ${tokenToVerify}`
         }
@@ -66,7 +66,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/login`, {
+      const response = await fetch(`${API_BASE}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -99,7 +99,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
   const loadApiKeys = async (authToken: string) => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/keys`, {
+      const response = await fetch(`${API_BASE}/api/admin/keys`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
@@ -125,7 +125,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     setSuccess(null);
 
     try {
-      const response = await fetch(`${API_BASE}/keys`, {
+      const response = await fetch(`${API_BASE}/api/admin/keys`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -161,7 +161,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     setSuccess(null);
 
     try {
-      const response = await fetch(`${API_BASE}/keys/${keyName}`, {
+      const response = await fetch(`${API_BASE}/api/admin/keys/${keyName}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -174,6 +174,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
       loadApiKeys(token);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete key');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (!token) return;
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/keys/clear-cache`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) throw new Error('Failed to clear cache');
+
+      setSuccess('Cache cleared successfully');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear cache');
     } finally {
       setLoading(false);
     }
@@ -261,10 +286,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
               <Shield className="w-8 h-8 text-blue-600" />
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">API Key Management</h2>
-                <p className="text-sm text-gray-500">Securely manage your API keys</p>
+                <p className="text-sm text-gray-500">Securely manage your API keys in Redis</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={handleClearCache}
+                disabled={loading}
+                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-50"
+                title="Clear cache"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Clear Cache
+              </button>
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
@@ -316,10 +350,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                   type="text"
                   value={newKeyName}
                   onChange={(e) => setNewKeyName(e.target.value)}
-                  placeholder="e.g., gemini_api_key"
+                  placeholder="e.g., VITE_GOOGLE_MAPS_API_KEY"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   required
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  Use exact env variable names (e.g., VITE_GOOGLE_MAPS_API_KEY)
+                </p>
               </div>
 
               <div>
@@ -387,7 +424,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
             {loading && apiKeys.length === 0 ? (
               <div className="text-center py-8 text-gray-500">Loading API keys...</div>
             ) : apiKeys.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">No API keys configured</div>
+              <div className="text-center py-8 text-gray-500">
+                <p className="mb-2">No API keys configured in Redis</p>
+                <p className="text-xs">Add keys above to store them securely</p>
+              </div>
             ) : (
               apiKeys.map((key) => (
                 <div

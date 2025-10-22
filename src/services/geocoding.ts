@@ -23,26 +23,100 @@ export async function reverseGeocode(
 ): Promise<LocationName | null> {
   try {
     const apiKey = await getApiKey();
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
-    const response = await fetch(url);
+    
+    // CRITICAL: Use proxy server to avoid CORS and mixed content issues
+    const proxyUrl = import.meta.env.VITE_PROXY_SERVER_URL || 'https://proxy.chatandbuild.com';
+    const accessToken = import.meta.env.VITE_PROXY_SERVER_ACCESS_TOKEN;
+    
+    const geocodingUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
+    
+    console.log('🔍 Reverse Geocoding Request:', {
+      proxyUrl,
+      geocodingUrl,
+      hasAccessToken: !!accessToken
+    });
+    
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        url: geocodingUrl,
+        method: 'GET',
+        headers: {},
+        body: {}
+      })
+    });
+    
+    console.log('📡 Proxy Response Status:', response.status, response.statusText);
     
     if (!response.ok) {
-      throw new Error(`Geocoding API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error('❌ Proxy Error Response:', errorText);
+      throw new Error(`Geocoding API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
+    console.log('✅ Geocoding API Response:', data);
 
     if (data.status !== 'OK' || !data.results || data.results.length === 0) {
       console.error('Geocoding failed:', data.status);
       return null;
     }
 
-    const result = data.results[0];
-    const addressComponents = result.address_components || [];
+    // Prioritize results by type to get the most specific address with postal code
+    const priorityTypes = [
+      'premise',           // Specific building/property
+      'subpremise',        // Unit within building
+      'street_address',    // Street-level address
+      'route',             // Street name
+      'intersection',      // Street intersection
+      'neighborhood',      // Neighborhood
+      'locality'           // City/town
+    ];
+
+    let bestResult = null;
+
+    // Find the most specific result that includes a postal code
+    for (const priorityType of priorityTypes) {
+      const found = data.results.find((result: any) => {
+        const hasType = result.types && result.types.includes(priorityType);
+        const hasPostalCode = result.address_components?.some((comp: any) => 
+          comp.types?.includes('postal_code')
+        );
+        return hasType && hasPostalCode;
+      });
+      
+      if (found) {
+        bestResult = found;
+        break;
+      }
+    }
+
+    // Fallback to first result with postal code
+    if (!bestResult) {
+      bestResult = data.results.find((result: any) =>
+        result.address_components?.some((comp: any) => 
+          comp.types?.includes('postal_code')
+        )
+      );
+    }
+
+    // Final fallback to first result
+    if (!bestResult) {
+      bestResult = data.results[0];
+    }
+
+    const addressComponents = bestResult.address_components || [];
 
     let locality = '';
     let neighborhood = '';
     let landmark = '';
+    let streetName = '';
+    let postalCode = '';
+    let country = '';
 
     for (const component of addressComponents) {
       const types = component.types || [];
@@ -53,20 +127,32 @@ export async function reverseGeocode(
         neighborhood = component.long_name;
       } else if (types.includes('point_of_interest') || types.includes('establishment')) {
         landmark = component.long_name;
+      } else if (types.includes('route')) {
+        streetName = component.long_name;
+      } else if (types.includes('postal_code')) {
+        postalCode = component.long_name;
+      } else if (types.includes('country')) {
+        country = component.long_name;
       }
     }
 
-    let formattedAddress = result.formatted_address;
+    // Construct formatted address in Google Maps style: "Street/Building, Country Postal_Code, Country"
+    let formattedAddress = bestResult.formatted_address;
 
-    if (landmark) {
-      formattedAddress = `near ${landmark}`;
-    } else if (neighborhood && locality) {
-      formattedAddress = `in ${neighborhood}, ${locality}`;
-    } else if (locality) {
-      formattedAddress = `in ${locality}`;
-    } else {
-      const parts = result.formatted_address.split(',');
-      formattedAddress = parts.slice(0, 2).join(',');
+    // If we have postal code and country, try to construct a cleaner format
+    if (postalCode && country) {
+      // Extract the main address part (before postal code)
+      const parts = formattedAddress.split(',').map((p: string) => p.trim());
+      
+      // Find the part with postal code
+      const postalIndex = parts.findIndex((p: string) => p.includes(postalCode));
+      
+      if (postalIndex > 0) {
+        // Take everything before postal code as the street/building name
+        const mainAddress = parts.slice(0, postalIndex).join(', ');
+        // Reconstruct: "Main Address, Country Postal_Code, Country"
+        formattedAddress = `${mainAddress}, ${country} ${postalCode}, ${country}`;
+      }
     }
 
     return {
@@ -85,14 +171,43 @@ export async function reverseGeocode(
 export async function forwardGeocode(address: string): Promise<LocationName | null> {
   try {
     const apiKey = await getApiKey();
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-    const response = await fetch(url);
+    
+    // CRITICAL: Use proxy server to avoid CORS and mixed content issues
+    const proxyUrl = import.meta.env.VITE_PROXY_SERVER_URL || 'https://proxy.chatandbuild.com';
+    const accessToken = import.meta.env.VITE_PROXY_SERVER_ACCESS_TOKEN;
+    
+    const geocodingUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
+    
+    console.log('🔍 Forward Geocoding Request:', {
+      proxyUrl,
+      geocodingUrl,
+      hasAccessToken: !!accessToken
+    });
+    
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        url: geocodingUrl,
+        method: 'GET',
+        headers: {},
+        body: {}
+      })
+    });
+    
+    console.log('📡 Proxy Response Status:', response.status, response.statusText);
     
     if (!response.ok) {
-      throw new Error(`Geocoding API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error('❌ Proxy Error Response:', errorText);
+      throw new Error(`Geocoding API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
+    console.log('✅ Geocoding API Response:', data);
 
     if (data.status !== 'OK' || !data.results || data.results.length === 0) {
       console.error('Forward geocoding failed:', data.status);
@@ -110,6 +225,8 @@ export async function forwardGeocode(address: string): Promise<LocationName | nu
     let locality = '';
     let neighborhood = '';
     let landmark = '';
+    let postalCode = '';
+    let country = '';
 
     for (const component of addressComponents) {
       const types = component.types || [];
@@ -120,11 +237,28 @@ export async function forwardGeocode(address: string): Promise<LocationName | nu
         neighborhood = component.long_name;
       } else if (types.includes('point_of_interest') || types.includes('establishment')) {
         landmark = component.long_name;
+      } else if (types.includes('postal_code')) {
+        postalCode = component.long_name;
+      } else if (types.includes('country')) {
+        country = component.long_name;
+      }
+    }
+
+    // Construct formatted address similar to reverse geocode
+    let formattedAddress = result.formatted_address;
+
+    if (postalCode && country) {
+      const parts = formattedAddress.split(',').map((p: string) => p.trim());
+      const postalIndex = parts.findIndex((p: string) => p.includes(postalCode));
+      
+      if (postalIndex > 0) {
+        const mainAddress = parts.slice(0, postalIndex).join(', ');
+        formattedAddress = `${mainAddress}, ${country} ${postalCode}, ${country}`;
       }
     }
 
     return {
-      formattedAddress: result.formatted_address,
+      formattedAddress,
       locality,
       neighborhood,
       landmark,
