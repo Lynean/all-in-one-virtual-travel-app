@@ -1,136 +1,170 @@
-// This file is deprecated - use src/services/maps.ts instead
-// Keeping for backwards compatibility
+export interface MapLocation {
+  lat: number;
+  lng: number;
+  address?: string;
+}
 
-import { Loader } from '@googlemaps/js-api-loader';
-
-export interface GoogleMapsConfig {
+interface LoadScriptOptions {
   apiKey: string;
   libraries?: string[];
 }
 
-export interface MapLocation {
-  lat: number;
-  lng: number;
-}
+let isScriptLoaded = false;
+let scriptLoadPromise: Promise<void> | null = null;
 
-export interface MapMarker {
-  position: MapLocation;
-  title: string;
-  icon?: string;
-}
-
-let loaderInstance: Loader | null = null;
-
-export const loadGoogleMapsScript = async (config: GoogleMapsConfig): Promise<void> => {
-  if (!loaderInstance) {
-    loaderInstance = new Loader({
-      apiKey: config.apiKey,
-      version: 'weekly',
-      libraries: config.libraries as any || ['places', 'geometry', 'marker']
-    });
+export const loadGoogleMapsScript = async (options: LoadScriptOptions): Promise<void> => {
+  if (isScriptLoaded) {
+    return Promise.resolve();
   }
-  
-  await loaderInstance.load();
+
+  if (scriptLoadPromise) {
+    return scriptLoadPromise;
+  }
+
+  scriptLoadPromise = new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Window object not available'));
+      return;
+    }
+
+    if (window.google?.maps) {
+      isScriptLoaded = true;
+      resolve();
+      return;
+    }
+
+    const script = document.createElement('script');
+    const libraries = options.libraries?.join(',') || 'places,geometry,marker';
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${options.apiKey}&libraries=${libraries}&loading=async`;
+    script.async = true;
+    script.defer = true;
+
+    script.onload = () => {
+      isScriptLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      scriptLoadPromise = null;
+      reject(new Error('Failed to load Google Maps script'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return scriptLoadPromise;
 };
 
 export const createMap = (
   element: HTMLElement,
   center: MapLocation,
-  zoom: number = 13,
+  zoom: number = 15,
   mapId?: string
 ): google.maps.Map => {
-  const config: google.maps.MapOptions = {
+  const mapOptions: google.maps.MapOptions = {
     center,
     zoom,
-    mapTypeControl: true,
-    streetViewControl: true,
-    fullscreenControl: true,
+    mapId,
+    // CRITICAL: Enable single-finger gestures on mobile
+    gestureHandling: 'greedy', // Allows single-finger pan and zoom
     zoomControl: true,
+    mapTypeControl: false,
+    scaleControl: true,
+    streetViewControl: false,
+    rotateControl: false,
+    fullscreenControl: true,
+    // Mobile-optimized controls
+    zoomControlOptions: {
+      position: google.maps.ControlPosition.RIGHT_CENTER
+    },
+    fullscreenControlOptions: {
+      position: google.maps.ControlPosition.RIGHT_TOP
+    }
   };
 
-  // Map ID is required for Advanced Markers
-  if (mapId) {
-    config.mapId = mapId;
-  }
-
-  return new google.maps.Map(element, config);
+  return new google.maps.Map(element, mapOptions);
 };
 
-export const createMarker = async (
+export const createMarker = (
   map: google.maps.Map,
-  position: google.maps.LatLngLiteral,
-  title: string
-): Promise<google.maps.marker.AdvancedMarkerElement> => {
-  const { AdvancedMarkerElement } = await google.maps.importLibrary('marker') as google.maps.MarkerLibrary;
-  
-  const marker = new AdvancedMarkerElement({
+  position: MapLocation,
+  title?: string,
+  icon?: string | google.maps.Icon | google.maps.Symbol
+): google.maps.Marker => {
+  return new google.maps.Marker({
     map,
     position,
     title,
+    icon,
+    animation: google.maps.Animation.DROP,
+    // Optimize for touch interactions
+    optimized: true,
+    clickable: true
   });
-
-  return marker;
 };
 
-export const createInfoWindow = (content: string): google.maps.InfoWindow => {
+export const createInfoWindow = (
+  content: string | HTMLElement
+): google.maps.InfoWindow => {
   return new google.maps.InfoWindow({
     content,
+    // Mobile-optimized info window
+    maxWidth: 300,
+    pixelOffset: new google.maps.Size(0, -30)
   });
 };
 
-/**
- * @deprecated Use Routes API instead: import { computeRoutes } from '../services/routesApi'
- * This function is kept for backwards compatibility but should not be used in new code.
- */
-export const calculateRoute = async (
-  directionsService: google.maps.DirectionsService,
-  origin: MapLocation,
-  destination: MapLocation,
-  travelMode: google.maps.TravelMode = google.maps.TravelMode.DRIVING
-): Promise<google.maps.DirectionsResult> => {
-  console.warn('calculateRoute is deprecated. Please use Routes API from ../services/routesApi');
-  return new Promise((resolve, reject) => {
-    directionsService.route(
-      {
-        origin,
-        destination,
-        travelMode,
-      },
-      (result, status) => {
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          resolve(result);
-        } else {
-          reject(new Error(`Directions request failed: ${status}`));
-        }
-      }
-    );
-  });
+export const addMarkerClickListener = (
+  marker: google.maps.Marker,
+  callback: () => void
+): google.maps.MapsEventListener => {
+  return marker.addListener('click', callback);
 };
 
-/**
- * @deprecated Use Places API (New) instead: import { searchNearby } from '../services/placesApi'
- * This function uses the legacy Places API and should not be used in new code.
- */
-export const searchNearbyPlaces = async (
-  service: google.maps.places.PlacesService,
-  location: MapLocation,
-  radius: number,
-  type: string
-): Promise<google.maps.places.PlaceResult[]> => {
-  console.warn('searchNearbyPlaces is deprecated. Please use Places API (New) from ../services/placesApi');
-  return new Promise((resolve, reject) => {
-    const request: google.maps.places.PlaceSearchRequest = {
-      location,
-      radius,
-      type,
-    };
+export const addMapClickListener = (
+  map: google.maps.Map,
+  callback: (event: google.maps.MapMouseEvent) => void
+): google.maps.MapsEventListener => {
+  return map.addListener('click', callback);
+};
 
-    service.nearbySearch(request, (results, status) => {
-      if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-        resolve(results);
-      } else {
-        reject(new Error(`Places search failed: ${status}`));
-      }
-    });
+export const clearMarkers = (markers: google.maps.Marker[]): void => {
+  markers.forEach(marker => marker.setMap(null));
+};
+
+export const fitBounds = (
+  map: google.maps.Map,
+  locations: MapLocation[]
+): void => {
+  if (locations.length === 0) return;
+
+  const bounds = new google.maps.LatLngBounds();
+  locations.forEach(location => {
+    bounds.extend(location);
   });
+
+  map.fitBounds(bounds);
+};
+
+export const calculateDistance = (
+  from: MapLocation,
+  to: MapLocation
+): number => {
+  const R = 6371; // Earth's radius in km
+  const dLat = toRad(to.lat - from.lat);
+  const dLng = toRad(to.lng - from.lng);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(from.lat)) *
+      Math.cos(toRad(to.lat)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+const toRad = (degrees: number): number => {
+  return degrees * (Math.PI / 180);
 };
