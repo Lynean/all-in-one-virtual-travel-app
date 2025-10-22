@@ -4,7 +4,7 @@ import os
 
 
 class Settings(BaseSettings):
-    # API Keys - Required
+    # API Keys
     gemini_api_key: str = ""
     google_maps_api_key: str = ""
     
