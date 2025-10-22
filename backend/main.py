@@ -122,7 +122,7 @@ async def get_google_maps_config():
         if redis_service and redis_service.client:
             # Try to get from Redis first
             maps_api_key = await redis_service.get_api_key("VITE_GOOGLE_MAPS_API_KEY")
-            map_id = await redis_service.get_api_key("Google_MAPS_MAP_ID")
+            map_id = await redis_service.get_api_key("GOOGLE_MAPS_MAP_ID")
         # Fallback to environment variables if Redis fails
         if not maps_api_key:
             import os
