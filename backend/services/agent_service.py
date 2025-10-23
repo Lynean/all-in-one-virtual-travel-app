@@ -81,9 +81,13 @@ User Location: {context.get('current_location', {})}
 Context: {json.dumps(context, indent=2)}
 
 Available Branches:
-1. CHECKLIST: Create task lists, itineraries, packing lists
-   - Examples: "create packing list", "plan my day", "things to do in Singapore", "create itinerary"
-2. TEXT: Provide information, recommendations, and general assistance
+1. CHECKLIST: Create task lists, packing lists with custom categories
+   - Examples: "create packing list", "things to pack", "checklist for trip"
+2. BUDGET: Plan trip budgets with customizable spending categories
+   - Examples: "plan budget", "how much money", "budget for trip", "calculate costs"
+3. ITINERARY: Create detailed day-by-day travel schedules with times and activities
+   - Examples: "plan itinerary", "daily schedule", "what to do each day", "create trip plan"
+4. TEXT: Provide information, recommendations, and general assistance
    - Examples: "what is Singapore like", "tell me about Marina Bay", "best time to visit", "recommend activities"
    - Also handles all location/place/direction queries (Maps will be handled by frontend)
 
@@ -96,6 +100,8 @@ For each branch, decide:
 
 Guidelines:
 - Enable MULTIPLE branches if query needs them (e.g., "plan my trip and create packing list" = CHECKLIST + TEXT)
+- For budget queries, enable BUDGET branch
+- For itinerary/schedule queries, enable ITINERARY branch
 - For place/location/direction queries, use TEXT branch to provide information
 - Set needs_clarification=true ONLY if critical info is missing
 - TEXT branch is default for most queries
@@ -113,12 +119,30 @@ Output ONLY valid JSON (no markdown, no explanations):
       "reasoning": "No checklist requested"
     }},
     {{
+      "branch": "budget",
+      "enabled": false,
+      "confidence": 0.0,
+      "needs_clarification": false,
+      "clarification": null,
+      "priority": 2,
+      "reasoning": "No budget requested"
+    }},
+    {{
+      "branch": "itinerary",
+      "enabled": false,
+      "confidence": 0.0,
+      "needs_clarification": false,
+      "clarification": null,
+      "priority": 3,
+      "reasoning": "No itinerary requested"
+    }},
+    {{
       "branch": "text",
       "enabled": true,
       "confidence": 0.9,
       "needs_clarification": false,
       "clarification": null,
-      "priority": 2,
+      "priority": 4,
       "reasoning": "General query or information request"
     }}
   ]
@@ -171,7 +195,9 @@ Output ONLY valid JSON (no markdown, no explanations):
             # Fallback: enable TEXT branch only
             return [
                 BranchDecision(branch="checklist", enabled=False, confidence=0.0, priority=1),
-                BranchDecision(branch="text", enabled=True, confidence=1.0, priority=2,
+                BranchDecision(branch="budget", enabled=False, confidence=0.0, priority=2),
+                BranchDecision(branch="itinerary", enabled=False, confidence=0.0, priority=3),
+                BranchDecision(branch="text", enabled=True, confidence=1.0, priority=4,
                              reasoning="Fallback due to classification error")
             ]
     
@@ -200,34 +226,30 @@ Output ONLY valid JSON (no markdown, no explanations):
         context: Dict[str, Any],
         clarifications: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Execute Checklist branch - generate checklist"""
-        prompt = f"""Generate a concise travel checklist based on the user's request.
+        """Execute Checklist branch - generate checklist with custom categories"""
+        prompt = f"""Generate a travel checklist based on the user's specific request.
 
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
-Create a comprehensive checklist with these categories (keep items concise):
-
-1. Pre-Departure Preparations - Passport (6+ months validity), visa if needed, travel insurance, SG Arrival Card (for Singapore), vaccinations
-2. Packing Essentials - Documents, phone/charger, power adapter (specify voltage), money, medications
-3. Packing Clothing - Weather-appropriate clothes, walking shoes, jacket for AC, umbrella
-4. Arrival Procedures - Immigration, customs (country-specific rules), SIM card, transport card
-5. Must-Do Activities - Top 5-7 attractions and experiences
-6. Optional Activities - Additional places if time permits
-7. Souvenirs & Shopping - Popular items, packing tips, customs limits
-8. Before Departure - Final checks, airport timing, luggage limits
+Analyze the user's needs and create custom categories that fit their request.
+For example:
+- General packing: Use categories like "Documents", "Electronics", "Clothing", "Toiletries"
+- Activity-specific: Create categories based on activities (e.g., "Beach Items", "Hiking Gear")
+- Trip-specific: Customize for trip type (e.g., "Business Travel Essentials", "Family Trip Needs")
 
 IMPORTANT:
+- Create 4-8 custom categories that match the user's specific needs
 - Keep each item under 100 characters
-- Include country-specific requirements (e.g., SG Arrival Card for Singapore, ESTA for USA)
+- Include country-specific requirements when relevant
 - Output ONLY valid JSON, no markdown
 
 Format:
 {{
-  "title": "[Destination] Trip Checklist",
+  "title": "Descriptive Checklist Title",
   "categories": [
     {{
-      "category": "Category Name",
+      "category": "Custom Category Name",
       "items": [
         {{"text": "Brief item description", "checked": false}}
       ]
@@ -298,6 +320,179 @@ Now generate the checklist as JSON:"""
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    async def _execute_budget_branch(
+        self,
+        user_query: str,
+        context: Dict[str, Any],
+        clarifications: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Execute Budget branch - generate trip budget with custom categories"""
+        prompt = f"""Generate a detailed trip budget plan based on the user's request.
+
+User Query: "{user_query}"
+Context: {json.dumps(context)}
+
+Analyze the user's needs and create a comprehensive budget with custom spending categories.
+Consider factors like:
+- Trip duration
+- Destination (cost of living)
+- Travel style (budget/mid-range/luxury)
+- Number of travelers
+- Specific activities mentioned
+
+Create custom budget categories that fit the trip, such as:
+- Accommodation, Food & Dining, Transportation, Activities & Tours, Shopping, Emergency Fund, etc.
+
+IMPORTANT:
+- Create 5-10 custom budget categories based on the trip
+- Provide realistic cost estimates in USD (or specify currency)
+- Include total budget and breakdown by category
+- Add brief notes/tips for each category
+- Output ONLY valid JSON, no markdown
+
+Format:
+{{
+  "title": "Trip Budget Plan",
+  "currency": "USD",
+  "totalBudget": 1500,
+  "categories": [
+    {{
+      "category": "Custom Category Name",
+      "amount": 300,
+      "notes": "Brief explanation or tips",
+      "percentage": 20
+    }}
+  ],
+  "tips": [
+    "Money-saving tip 1",
+    "Money-saving tip 2"
+  ]
+}}
+
+Now generate the budget as JSON:"""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            if not response_text or len(response_text.strip()) == 0:
+                return {"success": False, "error": "Empty response from LLM"}
+            
+            # Remove markdown code blocks if present
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                
+                try:
+                    budget_data = json.loads(json_str)
+                    return {"success": True, "data": budget_data, "type": "budget"}
+                except json.JSONDecodeError as parse_error:
+                    logger.error(f"❌ JSON decode error in budget: {parse_error}")
+                    raise parse_error
+            
+            return {"success": False, "error": "Could not parse budget data - no JSON found"}
+        except json.JSONDecodeError as e:
+            return {"success": False, "error": f"JSON parsing error: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    async def _execute_itinerary_branch(
+        self,
+        user_query: str,
+        context: Dict[str, Any],
+        clarifications: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Execute Itinerary branch - generate day-by-day travel schedule"""
+        prompt = f"""Generate a detailed day-by-day travel itinerary based on the user's request.
+
+User Query: "{user_query}"
+Context: {json.dumps(context)}
+
+Create a customized itinerary with:
+- Day-by-day breakdown
+- Time slots for each activity
+- Activity title and description
+- Travel time between locations
+- Meal suggestions
+
+Consider:
+- Trip duration (extract from query or ask)
+- Destination and attractions
+- User preferences (pace, interests)
+- Realistic timing and travel logistics
+
+IMPORTANT:
+- Use 24-hour time format (e.g., "09:00", "14:30")
+- Include travel time between activities
+- Keep descriptions concise but informative
+- Add practical tips where relevant
+- Output ONLY valid JSON, no markdown
+
+Format:
+{{
+  "title": "X-Day Trip Itinerary",
+  "destination": "Destination Name",
+  "days": [
+    {{
+      "day": 1,
+      "date": "Day 1",
+      "activities": [
+        {{
+          "time": "09:00",
+          "endTime": "11:00",
+          "title": "Activity Title",
+          "description": "Brief description of activity",
+          "location": "Location name",
+          "tips": "Optional tips or notes"
+        }}
+      ]
+    }}
+  ],
+  "generalTips": [
+    "Overall tip 1",
+    "Overall tip 2"
+  ]
+}}
+
+Now generate the itinerary as JSON:"""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            if not response_text or len(response_text.strip()) == 0:
+                return {"success": False, "error": "Empty response from LLM"}
+            
+            # Remove markdown code blocks if present
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                
+                try:
+                    itinerary_data = json.loads(json_str)
+                    return {"success": True, "data": itinerary_data, "type": "itinerary"}
+                except json.JSONDecodeError as parse_error:
+                    logger.error(f"❌ JSON decode error in itinerary: {parse_error}")
+                    raise parse_error
+            
+            return {"success": False, "error": "Could not parse itinerary data - no JSON found"}
+        except json.JSONDecodeError as e:
+            return {"success": False, "error": f"JSON parsing error: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     async def _execute_text_branch(
         self,
         user_query: str,
@@ -339,6 +534,10 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
             for branch in sorted(enabled_branches, key=lambda x: x.priority):
                 if branch.branch == "checklist":
                     tasks.append(self._execute_checklist_branch(user_query, context, clarifications))
+                elif branch.branch == "budget":
+                    tasks.append(self._execute_budget_branch(user_query, context, clarifications))
+                elif branch.branch == "itinerary":
+                    tasks.append(self._execute_itinerary_branch(user_query, context, clarifications))
                 elif branch.branch == "text":
                     tasks.append(self._execute_text_branch(user_query, context, chat_history))
         except Exception as e:
@@ -389,7 +588,13 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
             data = result.get('data', {})
             if result_type == 'checklist':
                 app_actions.append(AppAction(type="checklist", data=data))
-                logger.info(f"  ✅ Added checklist action with {len(data.get('items', []))} items")
+                logger.info(f"  ✅ Added checklist action")
+            elif result_type == 'budget':
+                app_actions.append(AppAction(type="budget", data=data))
+                logger.info(f"  ✅ Added budget action")
+            elif result_type == 'itinerary':
+                app_actions.append(AppAction(type="itinerary", data=data))
+                logger.info(f"  ✅ Added itinerary action")
             elif result_type == 'text':
                 text_responses.append(data.get('message', ''))
                 logger.info(f"  ✅ Added text response")
@@ -403,11 +608,16 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
             message_parts.extend(text_responses)
             logger.info(f"💬 Added {len(text_responses)} text response(s)")
         
-        # Add checklist acknowledgment if present
+        # Add acknowledgment for app actions if present
         if app_actions:
-            checklist_msg = "I've created a checklist for you. Check it out below!"
-            message_parts.append(checklist_msg)
-            logger.info(f"📋 Added checklist acknowledgment")
+            action_types = [action.type for action in app_actions]
+            if "checklist" in action_types:
+                message_parts.append("I've created a checklist for you. Check it out below!")
+            if "budget" in action_types:
+                message_parts.append("I've prepared a budget plan for your trip. Take a look!")
+            if "itinerary" in action_types:
+                message_parts.append("Here's your customized day-by-day itinerary!")
+            logger.info(f"📋 Added acknowledgment for {len(app_actions)} action(s)")
         
         # Combine all parts or use fallback
         if message_parts:
@@ -416,16 +626,23 @@ Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
             final_message = "I'm here to help with your travel planning. Let me know if you need anything!"
             logger.info(f"❓ Using fallback message")
         
-        # Generate suggestions
+        # Generate suggestions based on what was provided
         suggestions = []
+        action_types = [action.type for action in app_actions]
+        
         if app_actions and text_responses:
             # Both present
-            suggestions.append("Would you like to customize this checklist?")
-            suggestions.append("Need more details about anything?")
-        elif app_actions:
-            # Only checklist
-            suggestions.append("Would you like to customize this checklist?")
-            suggestions.append("Need recommendations for your trip?")
+            suggestions.append("Would you like to customize anything?")
+            suggestions.append("Need more details about your trip?")
+        elif "checklist" in action_types:
+            suggestions.append("Would you like to modify the checklist?")
+            suggestions.append("Need help with anything else?")
+        elif "budget" in action_types:
+            suggestions.append("Want to adjust the budget categories?")
+            suggestions.append("Need tips on saving money?")
+        elif "itinerary" in action_types:
+            suggestions.append("Would you like to adjust the schedule?")
+            suggestions.append("Need more activity suggestions?")
         elif text_responses:
             # Only text
             suggestions.append("Would you like more details?")
