@@ -211,10 +211,23 @@ Current Context: {json.dumps(current_context)}
 
 Extract and return ONLY valid JSON:
 {{
-  "destinations": ["city1", "city2"],
-  "interests": ["food", "culture"],
-  "budget_level": "budget"/"mid-range"/"luxury",
-  "travel_style": "relaxed"/"packed"/"family"/"solo"/"group"
+  "requirements": {{
+    "desired_location": "destination (null if not mentioned in THIS query)",
+    "current_location": "user's location (null if not mentioned in THIS query)",
+    "number_of_days": "trip duration (null if not mentioned in THIS query)",
+    "number_of_pax": "number of people (null if not mentioned in THIS query, 1 if solo)",
+    "interests": ["food", "scenery"] or null (only if mentioned in THIS query),
+    "total_budget": "amount with currency (null if not mentioned in THIS query)",
+    "accommodation": "hotel/hostel/airbnb (null if not mentioned in THIS query)",
+    "dietary_restrictions": "halal/vegetarian/none (null if not mentioned in THIS query)",
+    "travel_preference": {{
+      "max_distance_km": 10,
+      "transport_mode": "bus/taxi/rental/walking",
+      "max_travel_time_hours": null
+    }},
+    "specific_places": ["place1"] or null,
+    "specific_activitys": ["activity1"] or null
+  }}
 }}"""
 
         try:
@@ -231,35 +244,6 @@ Extract and return ONLY valid JSON:
             logger.error(f"Error extracting context: {e}")
             return {}
     
-    def _build_chat_history_string(self, history: List[Dict[str, str]], persistent_context: Dict[str, Any] = None) -> str:
-        """Convert history to string with persistent context"""
-        context_parts = []
-        
-        if persistent_context:
-            if persistent_context.get("current_location"):
-                loc = persistent_context["current_location"]
-                context_parts.append(f"Location: {loc.get('name', 'Unknown')}")
-            
-            if persistent_context.get("destinations_mentioned"):
-                dests = ", ".join(persistent_context["destinations_mentioned"])
-                context_parts.append(f"Destinations: {dests}")
-            
-            if persistent_context.get("interests"):
-                interests = ", ".join(persistent_context["interests"])
-                context_parts.append(f"Interests: {interests}")
-        
-        result = []
-        if context_parts:
-            result.append("=== CONTEXT ===")
-            result.extend(context_parts)
-            result.append("=== CONVERSATION ===")
-        
-        for msg in (history[-5:] if history else []):
-            role = "Human" if msg["role"] == "user" else "AI"
-            result.append(f"{role}: {msg['content']}")
-        
-        return "\n".join(result) if result else "No previous conversation."
-    
     # ==================== SESSION MANAGEMENT ====================
     
     async def create_session(self, user_id: str, session_id: str = None, metadata: Optional[Dict[str, Any]] = None) -> str:
@@ -274,11 +258,15 @@ Extract and return ONLY valid JSON:
             "last_activity": datetime.utcnow().isoformat(),
             "chat_history": [],
             "persistent_context": {
-                "destinations_mentioned": [],
+                "desired_location": "",
+                "specific_places": [],
+                "specific_activitys": [],
+                "current_location": "",
                 "interests": [],
-                "travel_dates": None,
-                "budget_level": None,
-                "travel_style": None,
+                "number_of_days": None,
+                "number_of_pax": None,
+                "total_budget": None,
+                "travel_preference": {},
                 "current_location": None,
                 "requirements": {},  # Store all extracted requirements here
                 "created_items": {"checklists": [], "itineraries": [], "budgets": []}
@@ -363,14 +351,9 @@ Extract and return ONLY valid JSON:
             
             # Update persistent context
             persistent_ctx = session_data.get("persistent_context", {})
-            
-            # Merge destinations
-            if extracted_context.get("destinations"):
-                current_dests = persistent_ctx.get("destinations_mentioned", [])
-                for dest in extracted_context["destinations"]:
-                    if dest and dest not in current_dests:
-                        current_dests.append(dest)
-                persistent_ctx["destinations_mentioned"] = current_dests[:5]
+            # Merge desired location
+            if extracted_context.get("desired_location"):
+                persistent_ctx["desired_location"] = extracted_context["desired_location"]
             
             # Merge interests
             if extracted_context.get("interests"):
@@ -455,43 +438,18 @@ Extract and return ONLY valid JSON:
             # Build single flat requirement object for response
             flat_requirements = {}
             for key, value in common_requirements.items():
-                # Convert values to boolean (True if filled, False if missing)
+                # Convert values to boolean (Value if filled, null if missing)
                 flat_requirements[key] = value
             
             # Detect if user is asking for specific action
-            message_lower = message.lower()
-            requested_action = None
-            if "checklist" in message_lower or "packing" in message_lower:
-                requested_action = "checklist"
-            elif "itinerary" in message_lower or "schedule" in message_lower or "plan my day" in message_lower:
-                requested_action = "itinerary"
-            elif "budget" in message_lower or "cost" in message_lower or "expense" in message_lower:
-                requested_action = "budget"
             
             # Build AI response - answer naturally + recommend tools + mention missing info
             if ready_actions:
                 # Prioritize requested action if specified
-                if requested_action and requested_action in ready_actions:
-                    primary_action = requested_action
-                elif requested_action and requested_action not in ready_actions:
-                    # User requested an action that's not ready - explain what's missing
-                    missing_fields = missing_info.get(requested_action, [])
-                    if missing_fields:
-                        fields_text = ", ".join(missing_fields)
-                        response_msg = f"I'd love to create a {requested_action} for you! To get started, I'll need your {fields_text}."
-                    else:
-                        response_msg = f"I can help create a {requested_action} for you!"
-                    primary_action = None
-                else:
-                    primary_action = ready_actions[0]
-                
-                if primary_action:
-                    # Use LLM to generate natural response
-                    ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
+                ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
 
 Current conversation context:
 - Stored requirements: {json.dumps(common_requirements, indent=2)}
-- User wants: {primary_action}
 - Ready actions: {ready_actions}
 
 Generate a natural, helpful response that:
@@ -501,12 +459,12 @@ Generate a natural, helpful response that:
 
 Keep response conversational and under 2 sentences. Don't mention other actions unless relevant."""
 
-                    try:
-                        ai_response = await self.llm.ainvoke(ai_response_prompt)
-                        response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
-                    except Exception as e:
-                        logger.error(f"Error generating AI response: {e}")
-                        response_msg = f"Perfect! I can create your {primary_action}. Send {{\"app_action\": \"{primary_action}\"}} to get started."
+                try:
+                    ai_response = await self.llm.ainvoke(ai_response_prompt)
+                    response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+                except Exception as e:
+                    logger.error(f"Error generating AI response: {e}")
+                    response_msg = f"Perfect! I can create your {primary_action}. Send {{\"app_action\": \"{primary_action}\"}} to get started."
                     
             elif missing_info:
                 # Missing info - answer naturally + mention what's needed
