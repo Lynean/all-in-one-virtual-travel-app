@@ -248,6 +248,52 @@ Output ONLY valid JSON (no markdown, no explanations):
         
         return data
     
+    async def _extract_context_from_message(
+        self,
+        message: str,
+        current_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Extract key information from user message to update persistent context"""
+        prompt = f"""Analyze this user message and extract key travel planning information.
+
+User Message: "{message}"
+
+Current Context: {json.dumps(current_context)}
+
+Extract and return ONLY the following information if mentioned (use null if not found):
+- destinations: List of places/cities mentioned
+- interests: Travel interests/activities (food, culture, adventure, shopping, etc.)
+- budget_level: "budget", "mid-range", or "luxury" (if mentioned)
+- travel_style: "relaxed", "packed", "family", "solo", "group" (if mentioned)
+
+Output ONLY valid JSON:
+{{
+  "destinations": ["city1", "city2"],
+  "interests": ["food", "culture"],
+  "budget_level": "mid-range",
+  "travel_style": "relaxed"
+}}"""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                extracted = json.loads(response_text[json_start:json_end])
+                return extracted
+            return {}
+        except Exception as e:
+            logger.error(f"Error extracting context: {e}")
+            return {}
+    
     # ==================== PHASE 3: BRANCH EXECUTION ====================
     
     async def _execute_checklist_branch(
@@ -766,7 +812,7 @@ Provide a helpful, friendly response now:"""
     
     async def create_session(self, user_id: str, session_id: str = None, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Create a new chat session
+        Create a new chat session with persistent context
         
         Args:
             user_id: User identifier
@@ -783,7 +829,21 @@ Provide a helpful, friendly response now:"""
             "user_id": user_id,
             "session_id": session_id,
             "created_at": datetime.utcnow().isoformat(),
+            "last_activity": datetime.utcnow().isoformat(),
             "chat_history": [],
+            "persistent_context": {
+                "destinations_mentioned": [],
+                "interests": [],
+                "travel_dates": None,
+                "budget_level": None,
+                "travel_style": None,
+                "current_location": None,
+                "created_items": {
+                    "checklists": [],
+                    "itineraries": [],
+                    "budgets": []
+                }
+            },
             "metadata": metadata or {}
         }
         
@@ -796,7 +856,59 @@ Provide a helpful, friendly response now:"""
         
         return session_id
     
-    async def delete_session(self, session_id: str, user_id: str):
+    async def get_or_create_session(self, user_id: str) -> str:
+        """
+        Get an active session for user or create a new one
+        Sessions are considered active if used within last 24 hours
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Session ID
+        """
+        # Try to find an active session for this user
+        # This would require maintaining a user_id -> session_id mapping in Redis
+        # For now, just create a new session
+        # Frontend should maintain session IDs in localStorage
+        
+        return await self.create_session(user_id)
+    
+    async def is_session_active(self, session_id: str) -> bool:
+        """
+        Check if a session is still active (within 24 hours of last activity)
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Boolean indicating if session is active
+        """
+        try:
+            if self.redis:
+                session_data = await self.redis.get_session(session_id)
+            else:
+                session_data = self._memory_sessions.get(session_id)
+            
+            if not session_data:
+                return False
+            
+            last_activity = session_data.get("last_activity")
+            if not last_activity:
+                return False
+            
+            from datetime import datetime, timedelta
+            last_time = datetime.fromisoformat(last_activity)
+            now = datetime.utcnow()
+            
+            # Session is active if used within last 24 hours
+            return (now - last_time) < timedelta(hours=24)
+            
+        except Exception as e:
+            logger.error(f"Error checking session activity: {e}")
+            return False
+    
+
         """
         Delete a chat session
         
@@ -863,8 +975,51 @@ Provide a helpful, friendly response now:"""
             if not session_data:
                 raise ValueError(f"Failed to retrieve or create session {session_id}")
             
-            # Build chat history
-            chat_history_str = self._build_chat_history_string(session_data.get("chat_history", []))
+            # Update last activity timestamp
+            session_data["last_activity"] = datetime.utcnow().isoformat()
+            
+            # Extract context from current message
+            extracted_context = await self._extract_context_from_message(
+                message,
+                session_data.get("persistent_context", {})
+            )
+            
+            # Update persistent context
+            persistent_ctx = session_data.get("persistent_context", {})
+            
+            # Merge destinations
+            if extracted_context.get("destinations"):
+                current_dests = persistent_ctx.get("destinations_mentioned", [])
+                for dest in extracted_context["destinations"]:
+                    if dest and dest not in current_dests:
+                        current_dests.append(dest)
+                persistent_ctx["destinations_mentioned"] = current_dests[:5]  # Keep last 5
+            
+            # Merge interests
+            if extracted_context.get("interests"):
+                current_interests = persistent_ctx.get("interests", [])
+                for interest in extracted_context["interests"]:
+                    if interest and interest not in current_interests:
+                        current_interests.append(interest)
+                persistent_ctx["interests"] = current_interests[:10]  # Keep last 10
+            
+            # Update budget level and travel style if mentioned
+            if extracted_context.get("budget_level"):
+                persistent_ctx["budget_level"] = extracted_context["budget_level"]
+            if extracted_context.get("travel_style"):
+                persistent_ctx["travel_style"] = extracted_context["travel_style"]
+            
+            # Update current location from context
+            if context and context.get('current_location'):
+                persistent_ctx["current_location"] = context['current_location']
+            
+            session_data["persistent_context"] = persistent_ctx
+            
+            # Build chat history with persistent context
+            chat_history_str = self._build_chat_history_string(
+                session_data.get("chat_history", []),
+                persistent_ctx
+            )
             
             # Prepare context with defaults
             if not context:
@@ -908,6 +1063,37 @@ Provide a helpful, friendly response now:"""
             # ==================== PHASE 4: RESULT AGGREGATION ====================
             logger.info("🔗 PHASE 4: Aggregating results...")
             aggregated = await self._aggregate_results(branch_results, message, context)
+            
+            # Store created items in persistent context
+            for app_action in aggregated.get('app_actions', []):
+                action_type = app_action.type
+                action_data = app_action.data
+                
+                if action_type == "checklist":
+                    persistent_ctx.setdefault("created_items", {}).setdefault("checklists", []).append({
+                        "title": action_data.get("title", "Untitled"),
+                        "created_at": datetime.utcnow().isoformat()
+                    })
+                elif action_type == "itinerary":
+                    persistent_ctx.setdefault("created_items", {}).setdefault("itineraries", []).append({
+                        "title": action_data.get("title", "Untitled"),
+                        "destination": action_data.get("destination", "Unknown"),
+                        "created_at": datetime.utcnow().isoformat()
+                    })
+                elif action_type == "budget":
+                    persistent_ctx.setdefault("created_items", {}).setdefault("budgets", []).append({
+                        "title": action_data.get("title", "Untitled"),
+                        "total": action_data.get("totalBudget", 0),
+                        "created_at": datetime.utcnow().isoformat()
+                    })
+            
+            # Keep only last 3 of each item type
+            created_items = persistent_ctx.get("created_items", {})
+            for item_type in ["checklists", "itineraries", "budgets"]:
+                if item_type in created_items:
+                    created_items[item_type] = created_items[item_type][-3:]
+            
+            session_data["persistent_context"] = persistent_ctx
             
             # Update session history
             session_data["chat_history"].append({
@@ -968,17 +1154,55 @@ Provide a helpful, friendly response now:"""
                 messages.append(AIMessage(content=msg["content"]))
         return messages
     
-    def _build_chat_history_string(self, history: List[Dict[str, str]]) -> str:
-        """Convert stored history to string format for ReAct agent"""
+    def _build_chat_history_string(self, history: List[Dict[str, str]], persistent_context: Dict[str, Any] = None) -> str:
+        """Convert stored history to string format with persistent context"""
+        context_parts = []
+        
+        # Add persistent context summary
+        if persistent_context:
+            if persistent_context.get("current_location"):
+                loc = persistent_context["current_location"]
+                context_parts.append(f"User's Location: {loc.get('name', 'Unknown')}")
+            
+            if persistent_context.get("destinations_mentioned"):
+                dests = ", ".join(persistent_context["destinations_mentioned"])
+                context_parts.append(f"Destinations Discussed: {dests}")
+            
+            if persistent_context.get("interests"):
+                interests = ", ".join(persistent_context["interests"])
+                context_parts.append(f"User Interests: {interests}")
+            
+            if persistent_context.get("budget_level"):
+                context_parts.append(f"Budget Level: {persistent_context['budget_level']}")
+            
+            if persistent_context.get("travel_style"):
+                context_parts.append(f"Travel Style: {persistent_context['travel_style']}")
+            
+            # Add info about created items
+            created = persistent_context.get("created_items", {})
+            if created.get("checklists"):
+                context_parts.append(f"Created Checklists: {len(created['checklists'])} item(s)")
+            if created.get("itineraries"):
+                context_parts.append(f"Created Itineraries: {len(created['itineraries'])} item(s)")
+            if created.get("budgets"):
+                context_parts.append(f"Created Budgets: {len(created['budgets'])} item(s)")
+        
+        result = []
+        
+        if context_parts:
+            result.append("=== SESSION CONTEXT ===")
+            result.extend(context_parts)
+            result.append("=== RECENT CONVERSATION ===")
+        
         if not history:
-            return "No previous conversation."
+            result.append("No previous conversation.")
+        else:
+            # Only last 5 messages
+            for msg in history[-5:]:
+                role = "Human" if msg["role"] == "user" else "AI"
+                result.append(f"{role}: {msg['content']}")
         
-        history_lines = []
-        for msg in history[-5:]:  # Only last 5 messages
-            role = "Human" if msg["role"] == "user" else "AI"
-            history_lines.append(f"{role}: {msg['content']}")
-        
-        return "\n".join(history_lines)
+        return "\n".join(result)
     
     def _enhance_message_with_context(self, message: str, context: Optional[Dict[str, Any]]) -> str:
         """Add context information to user message"""
