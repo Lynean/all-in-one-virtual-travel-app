@@ -218,6 +218,35 @@ Output ONLY valid JSON (no markdown, no explanations):
         
         return {"clarifications": clarifications, "has_clarifications": len(clarifications) > 0}
     
+    # ==================== HELPER FUNCTIONS ====================
+    
+    def _ensure_ids(self, data: Dict[str, Any], data_type: str) -> Dict[str, Any]:
+        """Ensure all items have unique IDs for frontend deletion"""
+        import uuid
+        
+        if data_type == "checklist":
+            for cat_idx, category in enumerate(data.get("categories", [])):
+                if "id" not in category:
+                    category["id"] = f"category-{cat_idx+1}"
+                for item_idx, item in enumerate(category.get("items", [])):
+                    if "id" not in item:
+                        item["id"] = f"item-{cat_idx+1}-{item_idx+1}"
+        
+        elif data_type == "budget":
+            for cat_idx, category in enumerate(data.get("categories", [])):
+                if "id" not in category:
+                    category["id"] = f"budget-category-{cat_idx+1}"
+        
+        elif data_type == "itinerary":
+            for day_idx, day in enumerate(data.get("days", [])):
+                if "id" not in day:
+                    day["id"] = f"day-{day_idx+1}"
+                for act_idx, activity in enumerate(day.get("activities", [])):
+                    if "id" not in activity:
+                        activity["id"] = f"activity-{day_idx+1}-{act_idx+1}"
+        
+        return data
+    
     # ==================== PHASE 3: BRANCH EXECUTION ====================
     
     async def _execute_checklist_branch(
@@ -249,9 +278,10 @@ Format:
   "title": "Descriptive Checklist Title",
   "categories": [
     {{
+      "id": "category-1",
       "category": "Custom Category Name",
       "items": [
-        {{"text": "Brief item description", "checked": false}}
+        {{"id": "item-1", "text": "Brief item description", "checked": false}}
       ]
     }}
   ]
@@ -284,6 +314,8 @@ Now generate the checklist as JSON:"""
                 
                 try:
                     checklist_data = json.loads(json_str)
+                    # Ensure all items have IDs for deletion
+                    checklist_data = self._ensure_ids(checklist_data, "checklist")
                     return {"success": True, "data": checklist_data, "type": "checklist"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error: {parse_error}")
@@ -309,6 +341,8 @@ Now generate the checklist as JSON:"""
                                 logger.info(f"🔧 Fixed JSON:\n{fixed_json}")
                                 checklist_data = json.loads(fixed_json)
                                 logger.info(f"✅ Successfully parsed fixed JSON!")
+                                # Ensure all items have IDs for deletion
+                                checklist_data = self._ensure_ids(checklist_data, "checklist")
                                 return {"success": True, "data": checklist_data, "type": "checklist"}
                     except Exception as fix_error:
                         logger.error(f"❌ Failed to fix JSON: {fix_error}")
@@ -357,6 +391,7 @@ Format:
   "totalBudget": 1500,
   "categories": [
     {{
+      "id": "budget-category-1",
       "category": "Custom Category Name",
       "amount": 300,
       "notes": "Brief explanation or tips",
@@ -391,6 +426,8 @@ Now generate the budget as JSON:"""
                 
                 try:
                     budget_data = json.loads(json_str)
+                    # Ensure all items have IDs for deletion
+                    budget_data = self._ensure_ids(budget_data, "budget")
                     return {"success": True, "data": budget_data, "type": "budget"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error in budget: {parse_error}")
@@ -412,6 +449,8 @@ Now generate the budget as JSON:"""
                                 fixed_json += '}' * open_objects
                                 budget_data = json.loads(fixed_json)
                                 logger.info(f"✅ Successfully parsed fixed JSON!")
+                                # Ensure all items have IDs for deletion
+                                budget_data = self._ensure_ids(budget_data, "budget")
                                 return {"success": True, "data": budget_data, "type": "budget"}
                     except Exception as fix_error:
                         logger.error(f"❌ Failed to fix JSON: {fix_error}")
@@ -449,10 +488,12 @@ Format:
   "destination": "Destination Name",
   "days": [
     {{
+      "id": "day-1",
       "day": 1,
       "date": "Day 1",
       "activities": [
         {{
+          "id": "activity-1",
           "time": "09:00",
           "endTime": "11:00",
           "title": "Activity Title",
@@ -490,6 +531,8 @@ Now generate the itinerary as JSON:"""
                 
                 try:
                     itinerary_data = json.loads(json_str)
+                    # Ensure all items have IDs for deletion
+                    itinerary_data = self._ensure_ids(itinerary_data, "itinerary")
                     return {"success": True, "data": itinerary_data, "type": "itinerary"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error in itinerary: {parse_error}")
@@ -515,6 +558,8 @@ Now generate the itinerary as JSON:"""
                                 logger.info(f"🔧 Fixed JSON")
                                 itinerary_data = json.loads(fixed_json)
                                 logger.info(f"✅ Successfully parsed fixed JSON!")
+                                # Ensure all items have IDs for deletion
+                                itinerary_data = self._ensure_ids(itinerary_data, "itinerary")
                                 return {"success": True, "data": itinerary_data, "type": "itinerary"}
                     except Exception as fix_error:
                         logger.error(f"❌ Failed to fix JSON: {fix_error}")
