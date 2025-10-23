@@ -456,22 +456,77 @@ Extract and return ONLY valid JSON:
             flat_requirements = {}
             for key, value in common_requirements.items():
                 # Convert values to boolean (True if filled, False if missing)
-                is_filled = value is not None and value != "" and (not isinstance(value, (list, dict)) or len(value) > 0)
-                flat_requirements[key] = is_filled
+                flat_requirements[key] = value
             
-            # Build response - mention what's needed, don't ask directly
+            # Build AI response - answer naturally + recommend tools + mention missing info
             if ready_actions:
+                # Some actions are ready - provide natural response + recommendation
                 ready_list = ", ".join(ready_actions)
-                response_msg = f"✅ I have all information needed for: {ready_list}. "
-                response_msg += f"Send {{\"app_action\": \"{ready_actions[0]}\"}} to create it."
+                
+                # Use LLM to generate natural response
+                ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
+
+Current conversation context:
+- Stored requirements: {json.dumps(common_requirements, indent=2)}
+- Ready actions: {ready_actions}
+
+Generate a natural, helpful response that:
+1. Answers their question or acknowledges their information
+2. Mentions that you can help create: {ready_list}
+3. Suggests they send {{"app_action": "{ready_actions[0]}"}} to create it
+
+Keep response conversational and under 3 sentences. Don't ask questions."""
+
+                try:
+                    ai_response = await self.llm.ainvoke(ai_response_prompt)
+                    response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+                except Exception as e:
+                    logger.error(f"Error generating AI response: {e}")
+                    response_msg = f"Great! I can help you create a {ready_list}. Send {{\"app_action\": \"{ready_actions[0]}\"}} when ready."
+                    
             elif missing_info:
-                # Mention what's needed for the first incomplete action
+                # Missing info - answer naturally + mention what's needed
                 first_action = list(missing_info.keys())[0]
                 missing_fields = missing_info[first_action]
-                fields_text = ", ".join(missing_fields)
-                response_msg = f"To create a {first_action}, I'll need your {fields_text}."
+                
+                ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
+
+Current conversation context:
+- Stored requirements: {json.dumps(common_requirements, indent=2)}
+- Missing for {first_action}: {missing_fields}
+
+Generate a natural, helpful response that:
+1. Answers their question or acknowledges their information
+2. Naturally mentions you can create a {first_action}
+3. Mentions you'll need their: {", ".join(missing_fields)}
+
+Keep response conversational and under 3 sentences. Make it sound natural, not like a form."""
+
+                try:
+                    ai_response = await self.llm.ainvoke(ai_response_prompt)
+                    response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+                except Exception as e:
+                    logger.error(f"Error generating AI response: {e}")
+                    fields_text = ", ".join(missing_fields)
+                    response_msg = f"I can help create a {first_action} for you. To do that, I'll need your {fields_text}."
+                    
             else:
-                response_msg = "How can I help you plan your trip?"
+                # No specific action - general travel assistant response
+                ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
+
+Generate a natural, helpful response that:
+1. Answers their question or greets them warmly
+2. Mentions you can help with: travel checklists, itineraries, and budgets
+3. Asks how you can assist
+
+Keep response conversational and under 2 sentences."""
+
+                try:
+                    ai_response = await self.llm.ainvoke(ai_response_prompt)
+                    response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+                except Exception as e:
+                    logger.error(f"Error generating AI response: {e}")
+                    response_msg = "Hello! I'm your travel assistant. I can help you create checklists, itineraries, and budgets for your trip. How can I assist you today?"
             
             logger.info(f"📋 Requirements: {len(ready_actions)} ready, {len(missing_info)} incomplete")
             
