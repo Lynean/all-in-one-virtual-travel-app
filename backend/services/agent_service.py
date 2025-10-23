@@ -586,7 +586,20 @@ Chat History:
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
-Provide a helpful, friendly response. Keep it concise (2-3 paragraphs max)."""
+IMPORTANT GUIDELINES:
+1. If the user is asking to FIND or SEARCH for places/restaurants/hotels:
+   - DO NOT say you will search or look up results
+   - Instead, tell them: "I can help you search! Please use the search bar or map to find [what they're looking for] near your location."
+   - Provide helpful tips about what to look for or popular options in the area
+
+2. If the user asks for RECOMMENDATIONS or INFORMATION:
+   - Provide helpful suggestions and information
+   - You can mention specific place names
+   - Be conversational and friendly
+
+3. Keep responses concise (2-3 paragraphs max)
+
+Provide a helpful, friendly response now:"""
 
         try:
             response = await self.llm.ainvoke(prompt)
