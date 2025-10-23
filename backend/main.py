@@ -54,7 +54,9 @@ async def lifespan(app: FastAPI):
     # Initialize Agent Service with Gemini
     try:
         agent_service = AgentService(redis_service)
+        logger.info("✅ Agent service initialized successfully")
     except Exception as e:
+        logger.error(f"❌ Failed to initialize agent service: {str(e)}", exc_info=True)
         # Allow app to start without agent service
         agent_service = None
     
@@ -288,6 +290,13 @@ async def chat(request: ChatRequest):
         ChatResponse with agent's response and any map actions
     """
     try:
+        # Check if agent service is initialized
+        if agent_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Agent service is not available. Please check server logs for initialization errors."
+            )
+        
         # Validate required fields
         if not request.user_id:
             raise HTTPException(status_code=422, detail="user_id is required")

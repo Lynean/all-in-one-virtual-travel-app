@@ -47,6 +47,10 @@ class AgentService:
             logger.error(f"Failed to initialize Gemini model: {str(e)}")
             raise
     
+    def _initialize_tools(self) -> List:
+        """Initialize agent tools"""
+        return [WeatherTool(), CurrencyTool()]
+    
     # ==================== REQUIREMENT EXTRACTION ====================
     
     async def _extract_all_requirements(
