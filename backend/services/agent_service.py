@@ -509,7 +509,7 @@ Format:
       "date": "Day 1",
       "activities": [
         {{
-          "id": "activity-1",
+          "id": "activity name / destination",
           "time": "09:00",
           "endTime": "11:00",
           "title": "Activity Title",
