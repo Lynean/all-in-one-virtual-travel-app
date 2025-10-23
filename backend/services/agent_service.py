@@ -458,31 +458,55 @@ Extract and return ONLY valid JSON:
                 # Convert values to boolean (True if filled, False if missing)
                 flat_requirements[key] = value
             
+            # Detect if user is asking for specific action
+            message_lower = message.lower()
+            requested_action = None
+            if "checklist" in message_lower or "packing" in message_lower:
+                requested_action = "checklist"
+            elif "itinerary" in message_lower or "schedule" in message_lower or "plan my day" in message_lower:
+                requested_action = "itinerary"
+            elif "budget" in message_lower or "cost" in message_lower or "expense" in message_lower:
+                requested_action = "budget"
+            
             # Build AI response - answer naturally + recommend tools + mention missing info
             if ready_actions:
-                # Some actions are ready - provide natural response + recommendation
-                ready_list = ", ".join(ready_actions)
+                # Prioritize requested action if specified
+                if requested_action and requested_action in ready_actions:
+                    primary_action = requested_action
+                elif requested_action and requested_action not in ready_actions:
+                    # User requested an action that's not ready - explain what's missing
+                    missing_fields = missing_info.get(requested_action, [])
+                    if missing_fields:
+                        fields_text = ", ".join(missing_fields)
+                        response_msg = f"I'd love to create a {requested_action} for you! To get started, I'll need your {fields_text}."
+                    else:
+                        response_msg = f"I can help create a {requested_action} for you!"
+                    primary_action = None
+                else:
+                    primary_action = ready_actions[0]
                 
-                # Use LLM to generate natural response
-                ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
+                if primary_action:
+                    # Use LLM to generate natural response
+                    ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
 
 Current conversation context:
 - Stored requirements: {json.dumps(common_requirements, indent=2)}
+- User wants: {primary_action}
 - Ready actions: {ready_actions}
 
 Generate a natural, helpful response that:
-1. Answers their question or acknowledges their information
-2. Mentions that you can help create: {ready_list}
-3. Suggests they send {{"app_action": "{ready_actions[0]}"}} to create it
+1. Acknowledges what they asked for
+2. Tells them you can create the {primary_action}
+3. Shows the command: {{"app_action": "{primary_action}"}}
 
-Keep response conversational and under 3 sentences. Don't ask questions."""
+Keep response conversational and under 2 sentences. Don't mention other actions unless relevant."""
 
-                try:
-                    ai_response = await self.llm.ainvoke(ai_response_prompt)
-                    response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
-                except Exception as e:
-                    logger.error(f"Error generating AI response: {e}")
-                    response_msg = f"Great! I can help you create a {ready_list}. Send {{\"app_action\": \"{ready_actions[0]}\"}} when ready."
+                    try:
+                        ai_response = await self.llm.ainvoke(ai_response_prompt)
+                        response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+                    except Exception as e:
+                        logger.error(f"Error generating AI response: {e}")
+                        response_msg = f"Perfect! I can create your {primary_action}. Send {{\"app_action\": \"{primary_action}\"}} to get started."
                     
             elif missing_info:
                 # Missing info - answer naturally + mention what's needed
