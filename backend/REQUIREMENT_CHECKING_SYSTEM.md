@@ -113,58 +113,126 @@ Every chat response now includes `requirements_status` in metadata:
 
 ## Behavior
 
+### Normal Messages (No Execution Trigger)
+For any normal user message, the system:
+1. **Always checks requirements** for each app action type
+2. **Never executes** the app action
+3. Returns **TEXT response** with:
+   - Requirement status in metadata
+   - Follow-up questions to gather missing info
+   - Confirmation that requirements are met (if ready)
+
+**Example:**
+```
+User: "I'm planning a trip to Japan for 2 weeks with my partner from NYC"
+
+Response:
+- TEXT branch executed
+- Message: "Great! I have all the information needed to create your Japan checklist. 
+           When you're ready, just say 'create the checklist' and I'll generate it for you."
+- Metadata shows: requirements_status.checklist.ready = true
+- NO checklist created yet
+```
+
+### Execution Trigger Messages
+When user sends a message with an execution trigger, the system:
+1. Detects the trigger phrase
+2. Checks requirements for the requested action
+3. **Executes the app action** if requirements are met
+4. Returns TEXT guidance if requirements are missing
+
+**Execution Trigger Phrases:**
+- Checklist: "create the checklist", "generate my checklist", "make the checklist"
+- Itinerary: "create the itinerary", "plan my days", "generate my itinerary"  
+- Budget: "create the budget", "show me the budget", "breakdown the budget"
+- General: "create it now", "go ahead", "proceed", "execute", "show me"
+
+**Example:**
+```
+User: "create the checklist now"
+
+Response (if requirements met):
+- CHECKLIST branch executed
+- Checklist created with categories
+- Message: "Here's your Japan travel checklist!"
+
+Response (if requirements missing):
+- TEXT branch executed
+- Message: "I need a few more details: Where are you traveling from? How long will you be there?"
+- Metadata shows missing fields
+```
+
 ### Auto-Disabling App Actions
-When requirements are not met:
-1. The app action branch is **disabled** (branch.enabled = False)
-2. If no branches remain enabled, a **TEXT branch is added** for conversational follow-up
-3. The AI asks follow-up questions to gather missing information
-4. Frontend receives `requirements_status` showing what's missing
+For **all messages** (with or without triggers):
+- App action branches are checked for requirements
+- If execution trigger NOT present → branch disabled (TEXT response)
+- If execution trigger present BUT requirements missing → branch disabled (TEXT response with guidance)
+- If execution trigger present AND requirements met → branch enabled (app action executed)
 
 ### Example Flow
 
 **User:** "I want to visit Japan"
 
 **Response:**
-- Checklist branch disabled (missing: duration, pax)
+- No execution trigger detected
+- Checklist branch disabled (missing: duration, pax, current_location)
 - TEXT branch enabled
 - Message: "That sounds exciting! How long are you planning to visit Japan for, and will you be traveling alone or with others?"
-- Metadata shows missing requirements
+- Metadata: `requirements_status.checklist.ready = false`
+
+---
 
 **User:** "2 weeks with my partner"
 
 **Response:**
-- Checklist branch still disabled (now has duration and pax, but needs current location)
+- No execution trigger detected
+- Checklist branch disabled (missing: current_location)
 - TEXT branch enabled
-- Message: "Great! Where will you be traveling from?"
+- Message: "Perfect! Where will you be traveling from?"
+- Metadata: `requirements_status.checklist.missing = ["current_location"]`
+
+---
 
 **User:** "From New York"
 
 **Response:**
-- Checklist branch **ENABLED** (all requirements met)
-- Checklist created with categories
-- Metadata shows all requirements satisfied
+- No execution trigger detected
+- All requirements met!
+- TEXT branch enabled
+- Message: "Excellent! I have all the details needed. Your trip: 2 weeks in Japan with your partner, departing from New York. Would you like me to create your checklist? Just say 'create the checklist'!"
+- Metadata: `requirements_status.checklist.ready = true`
+
+---
+
+**User:** "create the checklist"
+
+**Response:**
+- Execution trigger detected ✅
+- Requirements met ✅
+- CHECKLIST branch **ENABLED** and executed
+- Checklist created with custom categories
+- Message: "Here's your personalized Japan travel checklist for 2 people traveling for 2 weeks!"
+- Metadata: `requirements_status.checklist.ready = true`
 
 ## Future Enhancements
 
-### Explicit Execution Triggers
-Currently, app actions auto-execute when requirements are met. Future enhancement:
+### More Execution Triggers
+Add context-aware triggers:
 
 ```python
-# Detect explicit triggers in user message
-execute_app_actions = await self._detect_execution_trigger(message)
+# Implicit confirmations
+"yes, create it"
+"sounds good"
+"that works"
+"perfect, let's do it"
 
-# Only execute if explicitly requested
-if execute_app_actions and req_result["ready"]:
-    # Execute app action
+# Action-specific variations
+"I'm ready for the checklist"
+"show me what I need to pack"
+"what should my itinerary look like"
 ```
 
-**Trigger Examples:**
-- "create the checklist now"
-- "generate my itinerary"
-- "show me the budget breakdown"
-- "make my trip plan"
-
-### Frontend UI
+### Requirement Progress UI
 Display requirement progress:
 
 ```
@@ -183,17 +251,83 @@ Frontend should:
 3. Include session_id in all chat requests
 4. Clear session on explicit user action (e.g., "start over")
 
-## Testing
+### Testing
 
-### Test Cases
+#### Test Cases
 
-#### 1. Insufficient Information
+#### 1. Normal Message Without Trigger
 ```
 User: "I want to travel"
-Expected: TEXT branch only, requirements_status shows missing fields
+Expected: 
+- No execution trigger detected
+- TEXT branch only
+- requirements_status shows missing fields
+- Message asks for destination, duration, etc.
+- NO app action created
 ```
 
-#### 2. Gradual Information Gathering
+#### 2. Complete Info Without Trigger
+```
+User: "I'm flying from NYC to Tokyo for 10 days with my wife"
+Expected:
+- No execution trigger detected
+- TEXT branch only
+- requirements_status.checklist.ready = true
+- Message: "I have all the info! Say 'create the checklist' when ready."
+- NO app action created
+```
+
+#### 3. Execution Trigger With Complete Info
+```
+User: "create the checklist"
+Expected:
+- Execution trigger detected ✅
+- Requirements met ✅
+- CHECKLIST branch executes
+- Checklist created
+- requirements_status.checklist.ready = true
+```
+
+#### 4. Execution Trigger Without Complete Info
+```
+User: "create the checklist" (but missing destination)
+Expected:
+- Execution trigger detected ✅
+- Requirements NOT met ❌
+- TEXT branch only
+- Message: "I need more info: Where are you traveling?"
+- NO app action created
+```
+
+#### 5. Gradual Information Gathering
+```
+User: "Plan a trip to Paris"
+Response: TEXT - "How long and with whom?"
+
+User: "5 days, solo"
+Response: TEXT - "Where are you traveling from?"
+
+User: "From London"  
+Response: TEXT - "Perfect! Ready to create your checklist? Say 'create the checklist'"
+
+User: "create the checklist"
+Response: CHECKLIST created ✅
+```
+
+#### 6. Multiple Action Types
+```
+User: "I need a checklist and itinerary for Rome"
+Expected:
+- No execution trigger detected
+- Both requirements checked
+- TEXT response asking for missing info
+- NO app actions created
+
+User: "create both" (after providing all info)
+Expected:
+- Execution trigger detected
+- Both CHECKLIST and ITINERARY created
+```
 ```
 User: "Plan a trip to Paris"
 Response: Asks for duration and travelers
@@ -220,6 +354,18 @@ Expected:
 
 ## Configuration
 
+### Execution Trigger Phrases
+Modify `_detect_execution_trigger()` method to add/remove trigger phrases:
+
+```python
+triggers = [
+    # Add your custom triggers here
+    "let's create it",
+    "I'm ready",
+    "build it for me",
+]
+```
+
 ### Adjusting Requirements
 To modify required/optional fields, edit the LLM prompts in each `_check_*_requirements()` method:
 
@@ -233,16 +379,22 @@ OPTIONAL:
 - new_field: Description (with default value)
 ```
 
-### Disabling Requirement Checking
-To disable for testing:
+### Disabling Execution Triggers
+To revert to auto-execution (execute when requirements met):
 
 ```python
-# In process_message, after Phase 1:
-execute_app_actions = True  # Always execute
-requirements_status = {}    # Skip checking
+# In process_message, Phase 2:
+execute_app_actions = True  # Always execute if requirements met
 
-# Comment out the requirement checking loop
+# Or comment out trigger detection:
+# execute_app_actions = self._detect_execution_trigger(message)
 ```
+
+## Code Location
+File: `services/agent_service.py`
+- Lines ~62-115: `_detect_execution_trigger()` method
+- Lines ~117-280: Requirement checking methods (_check_requirements_for_action, etc.)
+- Lines ~1240-1295: Phase 2 integration in process_message
 
 ## Dependencies
 - `ChatGoogleGenerativeAI` (Gemini LLM)
@@ -250,8 +402,3 @@ requirements_status = {}    # Skip checking
 - `logger` for debugging
 - Session `persistent_context` for extracted info
 - `BranchDecision` model for branch management
-
-## Code Location
-File: `services/agent_service.py`
-Lines: ~870-1050 (requirement checking methods)
-Lines: ~1190-1240 (Phase 2 integration in process_message)

@@ -59,7 +59,68 @@ class AgentService:
             CurrencyTool()
         ]
     
-
+    def _detect_execution_trigger(self, message: str) -> bool:
+        """
+        Detect if user wants to explicitly execute app actions
+        
+        Args:
+            message: User message
+            
+        Returns:
+            True if execution trigger detected, False otherwise
+        """
+        message_lower = message.lower()
+        
+        # Execution trigger phrases
+        triggers = [
+            "create the checklist",
+            "generate the checklist",
+            "make the checklist",
+            "build the checklist",
+            "create my checklist",
+            "generate my checklist",
+            "make my checklist",
+            "create checklist",
+            
+            "create the itinerary",
+            "generate the itinerary",
+            "make the itinerary",
+            "build the itinerary",
+            "create my itinerary",
+            "generate my itinerary",
+            "make my itinerary",
+            "create itinerary",
+            "plan my day",
+            "plan my days",
+            
+            "create the budget",
+            "generate the budget",
+            "make the budget",
+            "build the budget",
+            "create my budget",
+            "generate my budget",
+            "make my budget",
+            "create budget",
+            "show me the budget",
+            "breakdown the budget",
+            
+            # General execution triggers
+            "create it now",
+            "generate it now",
+            "make it now",
+            "show me",
+            "let's do it",
+            "go ahead",
+            "proceed",
+            "execute"
+        ]
+        
+        for trigger in triggers:
+            if trigger in message_lower:
+                logger.info(f"🎯 Execution trigger detected: '{trigger}'")
+                return True
+        
+        return False
     
     # ==================== REQUIREMENT CHECKING SYSTEM ====================
     
@@ -1193,10 +1254,13 @@ Provide a helpful, friendly response now:"""
             # ==================== PHASE 2: REQUIREMENT CHECKING ====================
             logger.info("🔍 PHASE 2: Checking requirements for app actions...")
             
-            # Check if user explicitly wants to execute app actions
-            # For now, we'll auto-execute only if requirements are met
-            # In future, add explicit trigger detection (e.g., "create the checklist now")
-            execute_app_actions = True  # Will be refined with explicit triggers
+            # Detect if user explicitly wants to execute app actions
+            execute_app_actions = self._detect_execution_trigger(message)
+            
+            if execute_app_actions:
+                logger.info("✅ Execution trigger detected - will execute app actions if requirements met")
+            else:
+                logger.info("ℹ️ No execution trigger - will only check requirements and provide guidance")
             
             # Track requirement status for metadata
             requirements_status = {}
@@ -1204,7 +1268,7 @@ Provide a helpful, friendly response now:"""
             # Check requirements for each app action branch
             app_action_branches = [b for b in branches if b.enabled and b.branch in ["CHECKLIST", "ITINERARY", "BUDGET"]]
             
-            if app_action_branches and execute_app_actions:
+            if app_action_branches:
                 for branch in app_action_branches:
                     req_result = await self._check_requirements_for_action(
                         branch.branch,
@@ -1219,9 +1283,14 @@ Provide a helpful, friendly response now:"""
                         "has": req_result.get("has", [])
                     }
                     
-                    # If requirements not met, disable the app action branch
-                    if not req_result["ready"]:
-                        logger.info(f"❌ {branch.branch} requirements not met. Missing: {req_result.get('missing', [])}")
+                    # ALWAYS disable app action branches for normal messages
+                    # Only enable if execution trigger detected AND requirements met
+                    if not execute_app_actions or not req_result["ready"]:
+                        if not execute_app_actions:
+                            logger.info(f"🔒 {branch.branch} disabled - no execution trigger in message")
+                        else:
+                            logger.info(f"❌ {branch.branch} disabled - requirements not met. Missing: {req_result.get('missing', [])}")
+                        
                         branch.enabled = False
                         
                         # If this was the only enabled branch, add TEXT branch for follow-up
@@ -1229,10 +1298,12 @@ Provide a helpful, friendly response now:"""
                             text_branch = BranchDecision(
                                 branch="TEXT",
                                 enabled=True,
-                                reasoning=f"Need to gather more information for {branch.branch.lower()}",
+                                reasoning=f"Checking requirements for {branch.branch.lower()} or providing guidance",
                                 needs_clarification=False
                             )
                             branches.append(text_branch)
+                    else:
+                        logger.info(f"✅ {branch.branch} enabled - execution trigger present and requirements met")
             
             # ==================== PHASE 3: CLARIFICATION COLLECTION ====================
             clarification_result = await self._collect_clarifications(branches)
