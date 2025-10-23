@@ -1350,147 +1350,54 @@ Provide a helpful, friendly response now:"""
             if 'current_location' not in context:
                 context['current_location'] = {"name": "Unknown", "lat": 1.2894, "lng": 103.8499}
             
-            # ==================== PHASE 1: INTENT CLASSIFICATION ====================
-            logger.info("📊 PHASE 1: Classifying intent and deciding branches...")
-            branches = await self._classify_intent_and_decide_branches(message, context)
+            # ==================== SINGLE PHASE: REQUIREMENT EXTRACTION ====================
+            logger.info("📊 Extracting requirements from user message...")
             
-            # ==================== PHASE 2: REQUIREMENT CHECKING ====================
-            logger.info("🔍 PHASE 2: Extracting information and checking requirements...")
-            
-            # Detect if user explicitly wants to execute app actions
-            trigger_info = self._detect_execution_trigger(message)
-            execute_app_actions = trigger_info["execute"]
-            requested_actions = trigger_info.get("actions")
-            
-            if execute_app_actions:
-                logger.info(f"✅ Execution trigger detected - will execute: {requested_actions or 'all enabled actions'}")
-            else:
-                logger.info("ℹ️ No execution trigger - will extract and return requirement status")
-            
-            # Extract information for each app action branch
+            # Extract requirements for all action types
             requirements_status = {}
             
-            # Check requirements for each app action branch
-            app_action_branches = [b for b in branches if b.enabled and b.branch in ["CHECKLIST", "ITINERARY", "BUDGET"]]
-            
-            if app_action_branches:
-                for branch in app_action_branches:
-                    # Extract structured information
-                    extraction_result = await self._check_requirements_for_action(
-                        branch.branch,
-                        message,
-                        persistent_ctx,
-                        context
-                    )
-                    
-                    # Get the action-specific data (checklist/itinerary/budget)
-                    action_key = branch.branch.lower()
-                    action_data = extraction_result.get(action_key, {})
-                    
-                    # Store the full extraction result in requirements_status
-                    requirements_status[action_key] = extraction_result
-                    
-                    # Check if ready
-                    is_ready = action_data.get("ready", False)
-                    
-                    # Check if this specific action was requested
-                    action_requested = requested_actions is None or action_key in requested_actions
-                    
-                    # ALWAYS disable app action branches for normal messages
-                    # Only enable if execution trigger detected AND requirements met AND action requested
-                    if not execute_app_actions or not is_ready or not action_requested:
-                        if not execute_app_actions:
-                            logger.info(f"🔒 {branch.branch} disabled - no execution trigger in message")
-                        elif not action_requested:
-                            logger.info(f"🔒 {branch.branch} disabled - not in requested actions {requested_actions}")
-                        else:
-                            compulsory = action_data.get("compulsory", {})
-                            missing_fields = [k for k, v in compulsory.items() if v is None]
-                            logger.info(f"❌ {branch.branch} disabled - requirements not met. Missing: {missing_fields}")
-                        
-                        branch.enabled = False
-                        
-                        # If this was the only enabled branch, add TEXT branch for follow-up
-                        if len([b for b in branches if b.enabled]) == 0:
-                            text_branch = BranchDecision(
-                                branch="TEXT",
-                                enabled=True,
-                                reasoning=f"Extracting requirements for {branch.branch.lower()} or providing guidance",
-                                needs_clarification=False
-                            )
-                            branches.append(text_branch)
-                    else:
-                        logger.info(f"✅ {branch.branch} enabled - execution trigger present and requirements met")
-            
-            # ==================== PHASE 3: CLARIFICATION COLLECTION ====================
-            clarification_result = await self._collect_clarifications(branches)
-            
-            # If clarifications are needed, return them to frontend
-            if clarification_result.get('has_clarifications'):
-                logger.info("❓ PHASE 3: Clarifications needed from user")
-                clarifications_list = [b.clarification for b in branches if b.needs_clarification and b.clarification]
-                
-                return ChatResponse(
-                    session_id=session_id,
-                    message="I need a bit more information to help you better:",
-                    map_actions=[],
-                    app_actions=[],
-                    clarifications=clarifications_list,
-                    suggestions=[],
-                    metadata={
-                        "model": "gemini-2.5-flash",
-                        "phase": "clarification_needed",
-                        "branches": [{"branch": b.branch, "enabled": b.enabled} for b in branches],
-                        "requirements_status": requirements_status
-                    }
+            # Always check all three action types
+            for action_type in ["CHECKLIST", "ITINERARY", "BUDGET"]:
+                extraction_result = await self._check_requirements_for_action(
+                    action_type,
+                    message,
+                    persistent_ctx,
+                    context
                 )
-            
-            # ==================== PHASE 4: BRANCH EXECUTION ====================
-            logger.info("⚙️ PHASE 4: Executing branches...")
-            clarifications = {}  # In future, this would come from user's clarification response
-            branch_results = await self._execute_branches(
-                branches, message, context, clarifications, chat_history_str
-            )
-            
-            # ==================== PHASE 5: RESULT AGGREGATION ====================
-            logger.info("🔗 PHASE 5: Aggregating results...")
-            aggregated = await self._aggregate_results(branch_results, message, context)
-            
-            # Add requirements status to metadata
-            if not aggregated.get('metadata'):
-                aggregated['metadata'] = {}
-            aggregated['metadata']['requirements_status'] = requirements_status
-            
-            # Store created items in persistent context
-            for app_action in aggregated.get('app_actions', []):
-                action_type = app_action.type
-                action_data = app_action.data
                 
-                if action_type == "checklist":
-                    persistent_ctx.setdefault("created_items", {}).setdefault("checklists", []).append({
-                        "title": action_data.get("title", "Untitled"),
-                        "created_at": datetime.utcnow().isoformat()
-                    })
-                elif action_type == "itinerary":
-                    persistent_ctx.setdefault("created_items", {}).setdefault("itineraries", []).append({
-                        "title": action_data.get("title", "Untitled"),
-                        "destination": action_data.get("destination", "Unknown"),
-                        "created_at": datetime.utcnow().isoformat()
-                    })
-                elif action_type == "budget":
-                    persistent_ctx.setdefault("created_items", {}).setdefault("budgets", []).append({
-                        "title": action_data.get("title", "Untitled"),
-                        "total": action_data.get("totalBudget", 0),
-                        "created_at": datetime.utcnow().isoformat()
-                    })
+                action_key = action_type.lower()
+                requirements_status[action_key] = extraction_result
             
-            # Keep only last 3 of each item type
-            created_items = persistent_ctx.get("created_items", {})
-            for item_type in ["checklists", "itineraries", "budgets"]:
-                if item_type in created_items:
-                    created_items[item_type] = created_items[item_type][-3:]
+            # Generate follow-up questions based on what's missing
+            follow_up_questions = []
+            ready_actions = []
             
-            session_data["persistent_context"] = persistent_ctx
+            for action_key, status in requirements_status.items():
+                action_data = status.get(action_key, {})
+                compulsory = action_data.get("compulsory", {})
+                is_ready = action_data.get("ready", False)
+                
+                if is_ready:
+                    ready_actions.append(action_key)
+                else:
+                    # Find first missing compulsory field
+                    for field, value in compulsory.items():
+                        if value is None:
+                            field_name = field.replace("_", " ").title()
+                            follow_up_questions.append(f"What is your {field_name}?")
+                            break  # Only ask about first missing field per action
+            
+            # Build response message
+            if ready_actions:
+                ready_list = ", ".join(ready_actions)
+                response_msg = f"✅ I have all information for: {ready_list}. "
+                response_msg += f"Send {{'\"app_action\": \"{ready_actions[0]}\"'}} to create it."
+            elif follow_up_questions:
+                response_msg = follow_up_questions[0]  # Ask the first follow-up question
+            else:
+                response_msg = "How can I help you plan your trip?"
+            
+            logger.info(f"📋 Requirements status: {len(ready_actions)} ready, {len(follow_up_questions)} missing")
             
             # Update session history
             session_data["chat_history"].append({
@@ -1500,7 +1407,7 @@ Provide a helpful, friendly response now:"""
             })
             session_data["chat_history"].append({
                 "role": "assistant",
-                "content": aggregated['message'],
+                "content": response_msg,
                 "timestamp": datetime.utcnow().isoformat()
             })
             
@@ -1513,26 +1420,22 @@ Provide a helpful, friendly response now:"""
             else:
                 self._memory_sessions[session_id] = session_data
             
-            logger.info(f"✅ Processing complete: {len(aggregated['map_actions'])} map actions, {len(aggregated['app_actions'])} app actions")
-            
             return ChatResponse(
                 session_id=session_id,
-                message=aggregated['message'],
-                map_actions=aggregated['map_actions'],
-                app_actions=aggregated['app_actions'],
+                message=response_msg,
+                map_actions=[],
+                app_actions=[],
                 clarifications=[],
-                suggestions=aggregated['suggestions'],
+                suggestions=[],
                 metadata={
                     "model": "gemini-2.5-flash",
-                    "phase": "complete",
-                    "branches_executed": [b.branch for b in branches if b.enabled],
-                    "requirements_status": requirements_status,
-                    **(aggregated.get('metadata', {}))
+                    "phase": "requirement_extraction",
+                    "requirements_status": requirements_status
                 }
             )
             
         except Exception as e:
-            logger.error(f"❌ Error in multi-phase processing: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in requirement extraction: {str(e)}", exc_info=True)
             return ChatResponse(
                 session_id=session_id,
                 message=f"I encountered an error while processing your request. Please try again or rephrase your question.",
