@@ -40,6 +40,8 @@ class AgentService:
                 max_output_tokens=settings.max_tokens,
                 google_api_key=settings.gemini_api_key,
                 convert_system_message_to_human=True,  # Gemini compatibility
+                timeout=30,  # 30 second timeout for API calls
+                max_retries=2,  # Retry only twice to avoid long waits
                 safety_settings={
                     "HARASSMENT": "BLOCK_NONE",
                     "HATE_SPEECH": "BLOCK_NONE", 
@@ -132,154 +134,145 @@ class AgentService:
         current_context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Check if we have enough information to execute an app action
+        Check if we have enough information to execute an app action (RULE-BASED, NO LLM)
         Returns: {
             "ready": bool,
-            "missing_required": [list of missing required fields],
-            "missing_optional": [list of missing optional fields],
-            "follow_up_question": str (what to ask user next)
+            "missing": [list of missing required fields],
+            "has": [list of present required fields]
         }
         """
         
-        # Combine all available context
-        all_context = {
-            "user_query": user_query,
-            "destinations": persistent_context.get("destinations_mentioned", []),
-            "interests": persistent_context.get("interests", []),
-            "budget_level": persistent_context.get("budget_level"),
-            "travel_style": persistent_context.get("travel_style"),
-            "current_location": persistent_context.get("current_location") or current_context.get("current_location"),
-            "persistent_context": persistent_context
+        if action_type == "CHECKLIST":
+            return self._check_checklist_requirements_fast(user_query, persistent_context, current_context)
+        elif action_type == "ITINERARY":
+            return self._check_itinerary_requirements_fast(user_query, persistent_context, current_context)
+        elif action_type == "BUDGET":
+            return self._check_budget_requirements_fast(user_query, persistent_context, current_context)
+        
+        return {"ready": False, "missing": ["unknown action type"], "has": []}
+    
+    def _check_checklist_requirements_fast(
+        self, 
+        user_query: str, 
+        persistent_ctx: Dict[str, Any], 
+        current_ctx: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Fast rule-based checklist requirement checking (NO LLM call)
+        Required: destination, trip_duration, num_travelers
+        """
+        missing = []
+        has = []
+        
+        # Check destination
+        destinations = persistent_ctx.get("destinations_mentioned", [])
+        if destinations and len(destinations) > 0:
+            has.append("destination")
+        else:
+            missing.append("destination")
+        
+        # Check trip duration (look for number + time unit in query or context)
+        duration_keywords = ["day", "week", "month", "night"]
+        has_duration = any(keyword in user_query.lower() for keyword in duration_keywords)
+        if has_duration or persistent_ctx.get("trip_duration"):
+            has.append("trip_duration")
+        else:
+            missing.append("trip_duration")
+        
+        # Check number of travelers
+        traveler_keywords = ["solo", "alone", "myself", "with", "people", "person", "travelers", "partner", "wife", "husband", "friend", "family"]
+        has_travelers = any(keyword in user_query.lower() for keyword in traveler_keywords)
+        if has_travelers or persistent_ctx.get("num_travelers"):
+            has.append("num_travelers")
+        else:
+            missing.append("num_travelers")
+        
+        ready = len(missing) == 0
+        
+        return {
+            "ready": ready,
+            "missing": missing,
+            "has": has
         }
+    
+    def _check_itinerary_requirements_fast(
+        self, 
+        user_query: str, 
+        persistent_ctx: Dict[str, Any], 
+        current_ctx: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Fast rule-based itinerary requirement checking (NO LLM call)
+        Required: destination(s), interests (min 2), trip_duration
+        """
+        missing = []
+        has = []
         
-        if action_type == "checklist":
-            return await self._check_checklist_requirements(all_context)
-        elif action_type == "itinerary":
-            return await self._check_itinerary_requirements(all_context)
-        elif action_type == "budget":
-            return await self._check_budget_requirements(all_context)
+        # Check destinations
+        destinations = persistent_ctx.get("destinations_mentioned", [])
+        if destinations and len(destinations) > 0:
+            has.append("destinations")
+        else:
+            missing.append("destinations")
         
-        return {"ready": False, "missing_required": ["unknown action type"], "missing_optional": [], "follow_up_question": "I'm not sure what you're asking for."}
+        # Check interests (need at least 2)
+        interests = persistent_ctx.get("interests", [])
+        if interests and len(interests) >= 2:
+            has.append("interests")
+        else:
+            missing.append("interests (need at least 2)")
+        
+        # Check trip duration
+        duration_keywords = ["day", "week", "month", "night"]
+        has_duration = any(keyword in user_query.lower() for keyword in duration_keywords)
+        if has_duration or persistent_ctx.get("trip_duration"):
+            has.append("trip_duration")
+        else:
+            missing.append("trip_duration")
+        
+        ready = len(missing) == 0
+        
+        return {
+            "ready": ready,
+            "missing": missing,
+            "has": has
+        }
     
-    async def _check_checklist_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_budget_requirements_fast(
+        self, 
+        user_query: str, 
+        persistent_ctx: Dict[str, Any], 
+        current_ctx: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
-        Check requirements for checklist creation
-        Required: destination, current_location, trip_duration, num_travelers
-        Optional: accommodation_preference, interests, dietary_restrictions
+        Fast rule-based budget requirement checking (NO LLM call)
+        Required: total_budget, destinations
         """
-        prompt = f"""Analyze if we have enough information to create a travel checklist.
-
-User Query: "{context['user_query']}"
-Available Context: {json.dumps(context, indent=2)}
-
-REQUIRED INFORMATION:
-1. Destination (where they want to go)
-2. Current location (available from geocoding)
-3. Trip duration (how many days)
-4. Number of travelers (how many people)
-
-OPTIONAL INFORMATION:
-5. Accommodation preference (hotel, hostel, etc.)
-6. Activities of interest (food, scenery, amusement, nightlife, sea, etc.)
-7. Religious beliefs / dietary restrictions (halal, vegetarian, etc.)
-
-OUTPUT ONLY valid JSON:
-{{
-  "ready": true/false,
-  "missing_required": ["field1", "field2"],
-  "missing_optional": ["field3"],
-  "follow_up_question": "What should I ask next?"
-}}"""
-
-        return await self._execute_requirement_check(prompt)
-    
-    async def _check_itinerary_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Check requirements for itinerary creation
-        Required: destination(s), interests, trip_duration
-        Optional: travel_preference, max_radius
-        """
-        prompt = f"""Analyze if we have enough information to create a travel itinerary.
-
-User Query: "{context['user_query']}"
-Available Context: {json.dumps(context, indent=2)}
-
-REQUIRED INFORMATION:
-1. Destination(s) - can be multiple specific places (ask carefully)
-2. Activities of interest (food, scenery, amusement, nightlife, sea, etc.) - MUST have at least 2
-3. Trip duration (how many days)
-
-OPTIONAL INFORMATION:
-4. Travel preference (how far willing to travel, transport mode - bus/taxi/rental, time willing to spend)
-   - Default: 10km radius per destination if not specified
-5. Specific attractions they must visit
-
-NOTE: If destinations conflict (too many places OR places too far apart), ask for clarification.
-
-OUTPUT ONLY valid JSON:
-{{
-  "ready": true/false,
-  "missing_required": ["field1", "field2"],
-  "missing_optional": ["field3"],
-  "follow_up_question": "What should I ask next?"
-}}"""
-
-        return await self._execute_requirement_check(prompt)
-    
-    async def _check_budget_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Check requirements for budget creation
-        Required: total_budget, destination(s), current_location
-        Optional: dietary_preference, specific_places
-        """
-        prompt = f"""Analyze if we have enough information to create a budget plan.
-
-User Query: "{context['user_query']}"
-Available Context: {json.dumps(context, indent=2)}
-
-REQUIRED INFORMATION:
-1. Total budget (how much money they have)
-2. Destination(s) - can be multiple places
-3. Current location (for flight cost estimation - should be available from geocoding)
-
-OPTIONAL INFORMATION:
-4. Dietary restrictions/preferences (halal, vegetarian, none)
-5. Specific places to visit (amusement parks, restaurants, etc.)
-   - Can reference from itinerary if already created
-   - If not available, ask user
-
-OUTPUT ONLY valid JSON:
-{{
-  "ready": true/false,
-  "missing_required": ["field1", "field2"],
-  "missing_optional": ["field3"],
-  "follow_up_question": "What should I ask next?"
-}}"""
-
-        return await self._execute_requirement_check(prompt)
-    
-    async def _execute_requirement_check(self, prompt: str) -> Dict[str, Any]:
-        """Execute the requirement check with LLM"""
-        try:
-            response = await self.llm.ainvoke(prompt)
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            
-            # Extract JSON
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
-            
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                result = json.loads(response_text[json_start:json_end])
-                return result
-            
-            return {"ready": False, "missing_required": ["parsing error"], "missing_optional": [], "follow_up_question": "Could you provide more details about your trip?"}
-        except Exception as e:
-            logger.error(f"Error checking requirements: {e}")
-            return {"ready": False, "missing_required": ["error"], "missing_optional": [], "follow_up_question": "Could you provide more details about your trip?"}
+        missing = []
+        has = []
+        
+        # Check total budget (look for currency/numbers)
+        budget_keywords = ["budget", "$", "usd", "dollar", "spend", "cost"]
+        has_budget = any(keyword in user_query.lower() for keyword in budget_keywords)
+        if has_budget or persistent_ctx.get("budget_level"):
+            has.append("total_budget")
+        else:
+            missing.append("total_budget")
+        
+        # Check destinations
+        destinations = persistent_ctx.get("destinations_mentioned", [])
+        if destinations and len(destinations) > 0:
+            has.append("destinations")
+        else:
+            missing.append("destinations")
+        
+        ready = len(missing) == 0
+        
+        return {
+            "ready": ready,
+            "missing": missing,
+            "has": has
+        }
     
     # ==================== PHASE 1: INTENT CLASSIFICATION ====================
     
