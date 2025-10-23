@@ -131,7 +131,8 @@ Output ONLY valid JSON (no markdown, no explanations):
       "branch": "itinerary",
       "enabled": false,
       "confidence": 0.0,
-      "needs_clarification": false,
+      "needs_clarification"
+      : false,
       "clarification": null,
       "priority": 3,
       "reasoning": "No itinerary requested"
@@ -256,21 +257,27 @@ Output ONLY valid JSON (no markdown, no explanations):
         clarifications: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute Checklist branch - generate checklist with custom categories"""
-        prompt = f"""Generate a travel checklist based on the user's specific request.
+        prompt = f"""Generate a personalized travel checklist based on EXACTLY what the user requested.
 
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
-Analyze the user's needs and create custom categories that fit their request.
-For example:
-- General packing: Use categories like "Documents", "Electronics", "Clothing", "Toiletries"
-- Activity-specific: Create categories based on activities (e.g., "Beach Items", "Hiking Gear")
-- Trip-specific: Customize for trip type (e.g., "Business Travel Essentials", "Family Trip Needs")
+CAREFULLY ANALYZE WHAT THEY'RE ASKING FOR:
+- Is it for a specific activity? (beach, hiking, business, etc.)
+- What destination? (weather, culture, requirements)
+- Trip duration? (weekend vs long trip)
+- Any specific items or categories mentioned?
+
+CREATE CUSTOM CATEGORIES that match their exact needs:
+- DON'T use generic "Documents, Electronics, Clothing" unless appropriate
+- DO create specific categories for their trip type
+- Examples: Beach trip → "Beach Essentials", "Water Activities", "Sun Protection"
+- Business trip → "Business Documents", "Professional Attire", "Tech Equipment"
 
 IMPORTANT:
-- Create 4-8 custom categories that match the user's specific needs
+- Create 4-8 custom categories that match their SPECIFIC request
 - Keep each item under 100 characters
-- Include country-specific requirements when relevant
+- Include destination-specific requirements
 - Output ONLY valid JSON, no markdown
 
 Format:
@@ -361,21 +368,22 @@ Now generate the checklist as JSON:"""
         clarifications: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute Budget branch - generate trip budget with custom categories"""
-        prompt = f"""Generate a detailed trip budget plan based on the user's request.
+        prompt = f"""Generate a personalized trip budget plan based on the user's specific request.
 
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
-Analyze the user's needs and create a comprehensive budget with custom spending categories.
-Consider factors like:
-- Trip duration
-- Destination (cost of living)
-- Travel style (budget/mid-range/luxury)
-- Number of travelers
-- Specific activities mentioned
+CAREFULLY ANALYZE THE USER'S REQUEST:
+- What is their budget level? (Look for keywords: cheap, budget, affordable, mid-range, comfortable, luxury)
+- How long is the trip? (days/weeks mentioned)
+- What activities do they want? (affects activity budget)
+- Any specific spending priorities mentioned?
 
-Create custom budget categories that fit the trip, such as:
-- Accommodation, Food & Dining, Transportation, Activities & Tours, Shopping, Emergency Fund, etc.
+CREATE REALISTIC, PERSONALIZED ESTIMATES:
+- Match budget to destination's cost of living
+- Adjust categories based on travel style (backpacker vs luxury)
+- Include only relevant categories for their trip type
+- Don't just use generic tourist budgets - customize!
 
 IMPORTANT:
 - Create 5-10 custom budget categories based on the trip
@@ -469,17 +477,25 @@ Now generate the budget as JSON:"""
         clarifications: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute Itinerary branch - generate day-by-day travel schedule"""
-        prompt = f"""Generate a concise day-by-day travel itinerary based on the user's request.
+        prompt = f"""Generate a personalized day-by-day travel itinerary based on the user's specific request.
 
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
+ANALYZE THE USER'S PREFERENCES:
+- Look for keywords about interests (food, culture, adventure, nature, shopping, nightlife, etc.)
+- Consider trip style (relaxed, packed, budget, luxury)
+- Note any specific attractions or activities mentioned
+- Adapt to their pace and preferences
+
 IMPORTANT REQUIREMENTS:
-- Limit to 3-5 activities per day (avoid overwhelming schedules)
+- Customize based on what the user actually asked for (don't just list tourist hotspots)
+- Limit to 3-4 activities per day for a relaxed pace (or 5 if they want packed schedule)
 - Keep descriptions under 100 characters each
 - Keep tips under 80 characters each
 - Use 24-hour time format (e.g., "09:00", "14:30")
-- Include 2-4 days maximum unless specifically requested
+- Match the number of days requested (default to 2-3 if not specified)
+- Include variety: mix popular spots with local experiences
 - Output ONLY valid JSON, no markdown, no extra text
 
 Format:
