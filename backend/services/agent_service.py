@@ -61,6 +61,165 @@ class AgentService:
     
 
     
+    # ==================== REQUIREMENT CHECKING SYSTEM ====================
+    
+    async def _check_requirements_for_action(
+        self,
+        action_type: str,
+        user_query: str,
+        persistent_context: Dict[str, Any],
+        current_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Check if we have enough information to execute an app action
+        Returns: {
+            "ready": bool,
+            "missing_required": [list of missing required fields],
+            "missing_optional": [list of missing optional fields],
+            "follow_up_question": str (what to ask user next)
+        }
+        """
+        
+        # Combine all available context
+        all_context = {
+            "user_query": user_query,
+            "destinations": persistent_context.get("destinations_mentioned", []),
+            "interests": persistent_context.get("interests", []),
+            "budget_level": persistent_context.get("budget_level"),
+            "travel_style": persistent_context.get("travel_style"),
+            "current_location": persistent_context.get("current_location") or current_context.get("current_location"),
+            "persistent_context": persistent_context
+        }
+        
+        if action_type == "checklist":
+            return await self._check_checklist_requirements(all_context)
+        elif action_type == "itinerary":
+            return await self._check_itinerary_requirements(all_context)
+        elif action_type == "budget":
+            return await self._check_budget_requirements(all_context)
+        
+        return {"ready": False, "missing_required": ["unknown action type"], "missing_optional": [], "follow_up_question": "I'm not sure what you're asking for."}
+    
+    async def _check_checklist_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check requirements for checklist creation
+        Required: destination, current_location, trip_duration, num_travelers
+        Optional: accommodation_preference, interests, dietary_restrictions
+        """
+        prompt = f"""Analyze if we have enough information to create a travel checklist.
+
+User Query: "{context['user_query']}"
+Available Context: {json.dumps(context, indent=2)}
+
+REQUIRED INFORMATION:
+1. Destination (where they want to go)
+2. Current location (available from geocoding)
+3. Trip duration (how many days)
+4. Number of travelers (how many people)
+
+OPTIONAL INFORMATION:
+5. Accommodation preference (hotel, hostel, etc.)
+6. Activities of interest (food, scenery, amusement, nightlife, sea, etc.)
+7. Religious beliefs / dietary restrictions (halal, vegetarian, etc.)
+
+OUTPUT ONLY valid JSON:
+{{
+  "ready": true/false,
+  "missing_required": ["field1", "field2"],
+  "missing_optional": ["field3"],
+  "follow_up_question": "What should I ask next?"
+}}"""
+
+        return await self._execute_requirement_check(prompt)
+    
+    async def _check_itinerary_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check requirements for itinerary creation
+        Required: destination(s), interests, trip_duration
+        Optional: travel_preference, max_radius
+        """
+        prompt = f"""Analyze if we have enough information to create a travel itinerary.
+
+User Query: "{context['user_query']}"
+Available Context: {json.dumps(context, indent=2)}
+
+REQUIRED INFORMATION:
+1. Destination(s) - can be multiple specific places (ask carefully)
+2. Activities of interest (food, scenery, amusement, nightlife, sea, etc.) - MUST have at least 2
+3. Trip duration (how many days)
+
+OPTIONAL INFORMATION:
+4. Travel preference (how far willing to travel, transport mode - bus/taxi/rental, time willing to spend)
+   - Default: 10km radius per destination if not specified
+5. Specific attractions they must visit
+
+NOTE: If destinations conflict (too many places OR places too far apart), ask for clarification.
+
+OUTPUT ONLY valid JSON:
+{{
+  "ready": true/false,
+  "missing_required": ["field1", "field2"],
+  "missing_optional": ["field3"],
+  "follow_up_question": "What should I ask next?"
+}}"""
+
+        return await self._execute_requirement_check(prompt)
+    
+    async def _check_budget_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check requirements for budget creation
+        Required: total_budget, destination(s), current_location
+        Optional: dietary_preference, specific_places
+        """
+        prompt = f"""Analyze if we have enough information to create a budget plan.
+
+User Query: "{context['user_query']}"
+Available Context: {json.dumps(context, indent=2)}
+
+REQUIRED INFORMATION:
+1. Total budget (how much money they have)
+2. Destination(s) - can be multiple places
+3. Current location (for flight cost estimation - should be available from geocoding)
+
+OPTIONAL INFORMATION:
+4. Dietary restrictions/preferences (halal, vegetarian, none)
+5. Specific places to visit (amusement parks, restaurants, etc.)
+   - Can reference from itinerary if already created
+   - If not available, ask user
+
+OUTPUT ONLY valid JSON:
+{{
+  "ready": true/false,
+  "missing_required": ["field1", "field2"],
+  "missing_optional": ["field3"],
+  "follow_up_question": "What should I ask next?"
+}}"""
+
+        return await self._execute_requirement_check(prompt)
+    
+    async def _execute_requirement_check(self, prompt: str) -> Dict[str, Any]:
+        """Execute the requirement check with LLM"""
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                result = json.loads(response_text[json_start:json_end])
+                return result
+            
+            return {"ready": False, "missing_required": ["parsing error"], "missing_optional": [], "follow_up_question": "Could you provide more details about your trip?"}
+        except Exception as e:
+            logger.error(f"Error checking requirements: {e}")
+            return {"ready": False, "missing_required": ["error"], "missing_optional": [], "follow_up_question": "Could you provide more details about your trip?"}
+    
     # ==================== PHASE 1: INTENT CLASSIFICATION ====================
     
     async def _classify_intent_and_decide_branches(
@@ -908,7 +1067,7 @@ Provide a helpful, friendly response now:"""
             logger.error(f"Error checking session activity: {e}")
             return False
     
-
+    async def delete_session(self, session_id: str, user_id: str):
         """
         Delete a chat session
         
@@ -1031,12 +1190,56 @@ Provide a helpful, friendly response now:"""
             logger.info("📊 PHASE 1: Classifying intent and deciding branches...")
             branches = await self._classify_intent_and_decide_branches(message, context)
             
-            # ==================== PHASE 2: CLARIFICATION COLLECTION ====================
+            # ==================== PHASE 2: REQUIREMENT CHECKING ====================
+            logger.info("🔍 PHASE 2: Checking requirements for app actions...")
+            
+            # Check if user explicitly wants to execute app actions
+            # For now, we'll auto-execute only if requirements are met
+            # In future, add explicit trigger detection (e.g., "create the checklist now")
+            execute_app_actions = True  # Will be refined with explicit triggers
+            
+            # Track requirement status for metadata
+            requirements_status = {}
+            
+            # Check requirements for each app action branch
+            app_action_branches = [b for b in branches if b.enabled and b.branch in ["CHECKLIST", "ITINERARY", "BUDGET"]]
+            
+            if app_action_branches and execute_app_actions:
+                for branch in app_action_branches:
+                    req_result = await self._check_requirements_for_action(
+                        branch.branch,
+                        message,
+                        persistent_ctx,
+                        context
+                    )
+                    
+                    requirements_status[branch.branch.lower()] = {
+                        "ready": req_result["ready"],
+                        "missing": req_result.get("missing", []),
+                        "has": req_result.get("has", [])
+                    }
+                    
+                    # If requirements not met, disable the app action branch
+                    if not req_result["ready"]:
+                        logger.info(f"❌ {branch.branch} requirements not met. Missing: {req_result.get('missing', [])}")
+                        branch.enabled = False
+                        
+                        # If this was the only enabled branch, add TEXT branch for follow-up
+                        if len([b for b in branches if b.enabled]) == 0:
+                            text_branch = BranchDecision(
+                                branch="TEXT",
+                                enabled=True,
+                                reasoning=f"Need to gather more information for {branch.branch.lower()}",
+                                needs_clarification=False
+                            )
+                            branches.append(text_branch)
+            
+            # ==================== PHASE 3: CLARIFICATION COLLECTION ====================
             clarification_result = await self._collect_clarifications(branches)
             
             # If clarifications are needed, return them to frontend
             if clarification_result.get('has_clarifications'):
-                logger.info("❓ PHASE 2: Clarifications needed from user")
+                logger.info("❓ PHASE 3: Clarifications needed from user")
                 clarifications_list = [b.clarification for b in branches if b.needs_clarification and b.clarification]
                 
                 return ChatResponse(
@@ -1049,20 +1252,26 @@ Provide a helpful, friendly response now:"""
                     metadata={
                         "model": "gemini-2.5-flash",
                         "phase": "clarification_needed",
-                        "branches": [{"branch": b.branch, "enabled": b.enabled} for b in branches]
+                        "branches": [{"branch": b.branch, "enabled": b.enabled} for b in branches],
+                        "requirements_status": requirements_status
                     }
                 )
             
-            # ==================== PHASE 3: BRANCH EXECUTION ====================
-            logger.info("⚙️ PHASE 3: Executing branches...")
+            # ==================== PHASE 4: BRANCH EXECUTION ====================
+            logger.info("⚙️ PHASE 4: Executing branches...")
             clarifications = {}  # In future, this would come from user's clarification response
             branch_results = await self._execute_branches(
                 branches, message, context, clarifications, chat_history_str
             )
             
-            # ==================== PHASE 4: RESULT AGGREGATION ====================
-            logger.info("🔗 PHASE 4: Aggregating results...")
+            # ==================== PHASE 5: RESULT AGGREGATION ====================
+            logger.info("🔗 PHASE 5: Aggregating results...")
             aggregated = await self._aggregate_results(branch_results, message, context)
+            
+            # Add requirements status to metadata
+            if not aggregated.get('metadata'):
+                aggregated['metadata'] = {}
+            aggregated['metadata']['requirements_status'] = requirements_status
             
             # Store created items in persistent context
             for app_action in aggregated.get('app_actions', []):
@@ -1128,7 +1337,9 @@ Provide a helpful, friendly response now:"""
                 metadata={
                     "model": "gemini-2.5-flash",
                     "phase": "complete",
-                    "branches_executed": [b.branch for b in branches if b.enabled]
+                    "branches_executed": [b.branch for b in branches if b.enabled],
+                    "requirements_status": requirements_status,
+                    **(aggregated.get('metadata', {}))
                 }
             )
             
