@@ -426,7 +426,7 @@ Extract and return ONLY valid JSON:
             persistent_ctx["requirements"] = common_requirements
             session_data["persistent_context"] = persistent_ctx
             
-            # Analyze what's ready and what's missing
+            # Analyze what's ready and what's missing for each action type
             ready_actions = []
             missing_info = {}
             
@@ -451,6 +451,13 @@ Extract and return ONLY valid JSON:
                     
                     if missing_fields:
                         missing_info[action_key] = missing_fields
+            
+            # Build single flat requirement object for response
+            flat_requirements = {}
+            for key, value in common_requirements.items():
+                # Convert values to boolean (True if filled, False if missing)
+                is_filled = value is not None and value != "" and (not isinstance(value, (list, dict)) or len(value) > 0)
+                flat_requirements[key] = is_filled
             
             # Build response - mention what's needed, don't ask directly
             if ready_actions:
@@ -499,7 +506,8 @@ Extract and return ONLY valid JSON:
                 metadata={
                     "model": "gemini-2.5-flash",
                     "phase": "requirement_extraction",
-                    "requirements_status": requirements_status
+                    "requirements": flat_requirements,
+                    "ready_actions": ready_actions
                 }
             )
             
