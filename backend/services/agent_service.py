@@ -61,16 +61,43 @@ class AgentService:
             CurrencyTool()
         ]
     
-    def _detect_execution_trigger(self, message: str) -> bool:
+    def _detect_execution_trigger(self, message: str) -> Dict[str, Any]:
         """
         Detect if user wants to explicitly execute app actions
+        Can be either text-based trigger or JSON command
         
         Args:
-            message: User message
+            message: User message (can be text or JSON)
             
         Returns:
-            True if execution trigger detected, False otherwise
+            {
+                "execute": bool,
+                "actions": ["checklist", "itinerary", "budget"] or None,
+                "format": "text" or "json"
+            }
         """
+        
+        # First, try to parse as JSON
+        try:
+            if message.strip().startswith('{'):
+                data = json.loads(message)
+                
+                # Check if it's a special execution command
+                if "app_action" in data or "app_actions" in data:
+                    actions = data.get("app_action") or data.get("app_actions")
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    
+                    logger.info(f"🎯 JSON execution command detected: {actions}")
+                    return {
+                        "execute": True,
+                        "actions": actions,
+                        "format": "json"
+                    }
+        except json.JSONDecodeError:
+            pass  # Not JSON, check text triggers
+        
+        # Check text-based triggers
         message_lower = message.lower()
         
         # Execution trigger phrases
@@ -119,10 +146,30 @@ class AgentService:
         
         for trigger in triggers:
             if trigger in message_lower:
-                logger.info(f"🎯 Execution trigger detected: '{trigger}'")
-                return True
+                logger.info(f"🎯 Text execution trigger detected: '{trigger}'")
+                
+                # Determine which action based on trigger
+                actions = []
+                if "checklist" in trigger:
+                    actions = ["checklist"]
+                elif "itinerary" in trigger or "day" in trigger:
+                    actions = ["itinerary"]
+                elif "budget" in trigger:
+                    actions = ["budget"]
+                else:
+                    actions = None  # General trigger, execute all enabled
+                
+                return {
+                    "execute": True,
+                    "actions": actions,
+                    "format": "text"
+                }
         
-        return False
+        return {
+            "execute": False,
+            "actions": None,
+            "format": "text"
+        }
     
     # ==================== REQUIREMENT CHECKING SYSTEM ====================
     
@@ -134,145 +181,208 @@ class AgentService:
         current_context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Check if we have enough information to execute an app action (RULE-BASED, NO LLM)
-        Returns: {
-            "ready": bool,
-            "missing": [list of missing required fields],
-            "has": [list of present required fields]
-        }
+        Extract and return structured information for app actions
+        Returns JSON object showing compulsory and optional fields with extracted values
         """
         
         if action_type == "CHECKLIST":
-            return self._check_checklist_requirements_fast(user_query, persistent_context, current_context)
+            return await self._extract_checklist_info(user_query, persistent_context, current_context)
         elif action_type == "ITINERARY":
-            return self._check_itinerary_requirements_fast(user_query, persistent_context, current_context)
+            return await self._extract_itinerary_info(user_query, persistent_context, current_context)
         elif action_type == "BUDGET":
-            return self._check_budget_requirements_fast(user_query, persistent_context, current_context)
+            return await self._extract_budget_info(user_query, persistent_context, current_context)
         
-        return {"ready": False, "missing": ["unknown action type"], "has": []}
+        return {"error": "unknown action type"}
     
-    def _check_checklist_requirements_fast(
+    async def _extract_checklist_info(
         self, 
         user_query: str, 
         persistent_ctx: Dict[str, Any], 
         current_ctx: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Fast rule-based checklist requirement checking (NO LLM call)
-        Required: destination, trip_duration, num_travelers
+        Extract checklist information from context and query
+        Returns structured JSON with compulsory and optional fields
         """
-        missing = []
-        has = []
         
-        # Check destination
-        destinations = persistent_ctx.get("destinations_mentioned", [])
-        if destinations and len(destinations) > 0:
-            has.append("destination")
-        else:
-            missing.append("destination")
-        
-        # Check trip duration (look for number + time unit in query or context)
-        duration_keywords = ["day", "week", "month", "night"]
-        has_duration = any(keyword in user_query.lower() for keyword in duration_keywords)
-        if has_duration or persistent_ctx.get("trip_duration"):
-            has.append("trip_duration")
-        else:
-            missing.append("trip_duration")
-        
-        # Check number of travelers
-        traveler_keywords = ["solo", "alone", "myself", "with", "people", "person", "travelers", "partner", "wife", "husband", "friend", "family"]
-        has_travelers = any(keyword in user_query.lower() for keyword in traveler_keywords)
-        if has_travelers or persistent_ctx.get("num_travelers"):
-            has.append("num_travelers")
-        else:
-            missing.append("num_travelers")
-        
-        ready = len(missing) == 0
-        
-        return {
-            "ready": ready,
-            "missing": missing,
-            "has": has
-        }
+        prompt = f"""Extract travel checklist information from the conversation.
+
+User Query: "{user_query}"
+
+Persistent Context:
+- Destinations mentioned: {persistent_ctx.get('destinations_mentioned', [])}
+- Interests: {persistent_ctx.get('interests', [])}
+- Travel style: {persistent_ctx.get('travel_style')}
+- Budget level: {persistent_ctx.get('budget_level')}
+
+Current Context:
+- Current location: {current_ctx.get('current_location', {{}})}
+
+EXTRACT the following information and return ONLY valid JSON:
+
+{{
+  "checklist": {{
+    "compulsory": {{
+      "desired_location": "where user wants to go (null if not mentioned)",
+      "current_location": "user's current location from geocoding (null if not available)",
+      "number_of_days": "how many days for the trip (null if not mentioned)",
+      "number_of_pax": "how many people traveling (null if not mentioned, default to 1 if 'solo' or 'alone')"
+    }},
+    "optional": {{
+      "accommodation": "hotel/hostel/airbnb preference (null if not mentioned)",
+      "interests": ["food", "scenery", "amusement", "nightlife", "sea"] or null,
+      "dietary_restrictions": "halal/vegetarian/none (null if not mentioned)"
+    }},
+    "ready": true/false (true only if ALL compulsory fields are filled)
+  }}
+}}
+
+IMPORTANT: 
+- Use null for missing values, not empty strings
+- Extract exact values from context
+- For current_location, use the geocoded location if available
+- Set ready=true ONLY when all 4 compulsory fields have values"""
+
+        return await self._execute_info_extraction(prompt, "checklist")
     
-    def _check_itinerary_requirements_fast(
+    async def _extract_itinerary_info(
         self, 
         user_query: str, 
         persistent_ctx: Dict[str, Any], 
         current_ctx: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Fast rule-based itinerary requirement checking (NO LLM call)
-        Required: destination(s), interests (min 2), trip_duration
+        Extract itinerary information from context and query
+        Returns structured JSON with compulsory and optional fields
         """
-        missing = []
-        has = []
         
-        # Check destinations
-        destinations = persistent_ctx.get("destinations_mentioned", [])
-        if destinations and len(destinations) > 0:
-            has.append("destinations")
-        else:
-            missing.append("destinations")
-        
-        # Check interests (need at least 2)
-        interests = persistent_ctx.get("interests", [])
-        if interests and len(interests) >= 2:
-            has.append("interests")
-        else:
-            missing.append("interests (need at least 2)")
-        
-        # Check trip duration
-        duration_keywords = ["day", "week", "month", "night"]
-        has_duration = any(keyword in user_query.lower() for keyword in duration_keywords)
-        if has_duration or persistent_ctx.get("trip_duration"):
-            has.append("trip_duration")
-        else:
-            missing.append("trip_duration")
-        
-        ready = len(missing) == 0
-        
-        return {
-            "ready": ready,
-            "missing": missing,
-            "has": has
-        }
+        prompt = f"""Extract travel itinerary information from the conversation.
+
+User Query: "{user_query}"
+
+Persistent Context:
+- Destinations mentioned: {persistent_ctx.get('destinations_mentioned', [])}
+- Interests: {persistent_ctx.get('interests', [])}
+- Travel style: {persistent_ctx.get('travel_style')}
+
+Current Context:
+- Current location: {current_ctx.get('current_location', {{}})}
+
+EXTRACT the following information and return ONLY valid JSON:
+
+{{
+  "itinerary": {{
+    "compulsory": {{
+      "desired_locations": ["place1", "place2"] or null (can be multiple specific places),
+      "interests": ["food", "scenery", "amusement"] or null (MUST have at least 2),
+      "number_of_days": "how many days (null if not mentioned)"
+    }},
+    "optional": {{
+      "travel_preference": {{
+        "max_distance_km": 10,
+        "transport_mode": "bus/taxi/rental/walking",
+        "max_travel_time_hours": null
+      }},
+      "specific_attractions": ["attraction1", "attraction2"] or null
+    }},
+    "ready": true/false (true only if ALL compulsory fields are filled and interests has at least 2 items)
+  }}
+}}
+
+IMPORTANT:
+- Use null for missing values
+- desired_locations can be multiple places, ask carefully
+- interests MUST have at least 2 items to be valid
+- Default max_distance_km to 10 if not specified
+- Check if destinations conflict (too far apart)"""
+
+        return await self._execute_info_extraction(prompt, "itinerary")
     
-    def _check_budget_requirements_fast(
+    async def _extract_budget_info(
         self, 
         user_query: str, 
         persistent_ctx: Dict[str, Any], 
         current_ctx: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Fast rule-based budget requirement checking (NO LLM call)
-        Required: total_budget, destinations
+        Extract budget information from context and query
+        Returns structured JSON with compulsory and optional fields
         """
-        missing = []
-        has = []
         
-        # Check total budget (look for currency/numbers)
-        budget_keywords = ["budget", "$", "usd", "dollar", "spend", "cost"]
-        has_budget = any(keyword in user_query.lower() for keyword in budget_keywords)
-        if has_budget or persistent_ctx.get("budget_level"):
-            has.append("total_budget")
-        else:
-            missing.append("total_budget")
-        
-        # Check destinations
-        destinations = persistent_ctx.get("destinations_mentioned", [])
-        if destinations and len(destinations) > 0:
-            has.append("destinations")
-        else:
-            missing.append("destinations")
-        
-        ready = len(missing) == 0
-        
-        return {
-            "ready": ready,
-            "missing": missing,
-            "has": has
-        }
+        prompt = f"""Extract travel budget information from the conversation.
+
+User Query: "{user_query}"
+
+Persistent Context:
+- Destinations mentioned: {persistent_ctx.get('destinations_mentioned', [])}
+- Budget level: {persistent_ctx.get('budget_level')}
+- Created itineraries: {persistent_ctx.get('created_items', {{}}).get('itineraries', [])}
+
+Current Context:
+- Current location: {current_ctx.get('current_location', {{}})}
+
+EXTRACT the following information and return ONLY valid JSON:
+
+{{
+  "budget": {{
+    "compulsory": {{
+      "total_budget": "total budget amount with currency (null if not mentioned)",
+      "desired_locations": ["place1", "place2"] or null,
+      "current_location": "user's location from geocoding (null if not available)"
+    }},
+    "optional": {{
+      "dietary_preference": "halal/vegetarian/none (null if not mentioned)",
+      "specific_places": ["amusement park", "restaurant name"] or null,
+      "itinerary_reference": "can reference places from created itinerary if available"
+    }},
+    "ready": true/false (true only if ALL compulsory fields are filled)
+  }}
+}}
+
+IMPORTANT:
+- Use null for missing values
+- total_budget should include currency (e.g., "1000 USD", "$500")
+- Extract specific places from itinerary if available
+- current_location should come from geocoding"""
+
+        return await self._execute_info_extraction(prompt, "budget")
+    
+    async def _execute_info_extraction(self, prompt: str, action_type: str) -> Dict[str, Any]:
+        """Execute LLM-based information extraction and return structured JSON"""
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                result = json.loads(response_text[json_start:json_end])
+                return result
+            
+            # Fallback structure
+            return {
+                action_type: {
+                    "compulsory": {},
+                    "optional": {},
+                    "ready": False
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error extracting {action_type} info: {e}")
+            return {
+                action_type: {
+                    "compulsory": {},
+                    "optional": {},
+                    "ready": False,
+                    "error": str(e)
+                }
+            }
     
     # ==================== PHASE 1: INTENT CLASSIFICATION ====================
     
@@ -1245,17 +1355,19 @@ Provide a helpful, friendly response now:"""
             branches = await self._classify_intent_and_decide_branches(message, context)
             
             # ==================== PHASE 2: REQUIREMENT CHECKING ====================
-            logger.info("🔍 PHASE 2: Checking requirements for app actions...")
+            logger.info("🔍 PHASE 2: Extracting information and checking requirements...")
             
             # Detect if user explicitly wants to execute app actions
-            execute_app_actions = self._detect_execution_trigger(message)
+            trigger_info = self._detect_execution_trigger(message)
+            execute_app_actions = trigger_info["execute"]
+            requested_actions = trigger_info.get("actions")
             
             if execute_app_actions:
-                logger.info("✅ Execution trigger detected - will execute app actions if requirements met")
+                logger.info(f"✅ Execution trigger detected - will execute: {requested_actions or 'all enabled actions'}")
             else:
-                logger.info("ℹ️ No execution trigger - will only check requirements and provide guidance")
+                logger.info("ℹ️ No execution trigger - will extract and return requirement status")
             
-            # Track requirement status for metadata
+            # Extract information for each app action branch
             requirements_status = {}
             
             # Check requirements for each app action branch
@@ -1263,26 +1375,38 @@ Provide a helpful, friendly response now:"""
             
             if app_action_branches:
                 for branch in app_action_branches:
-                    req_result = await self._check_requirements_for_action(
+                    # Extract structured information
+                    extraction_result = await self._check_requirements_for_action(
                         branch.branch,
                         message,
                         persistent_ctx,
                         context
                     )
                     
-                    requirements_status[branch.branch.lower()] = {
-                        "ready": req_result["ready"],
-                        "missing": req_result.get("missing", []),
-                        "has": req_result.get("has", [])
-                    }
+                    # Get the action-specific data (checklist/itinerary/budget)
+                    action_key = branch.branch.lower()
+                    action_data = extraction_result.get(action_key, {})
+                    
+                    # Store the full extraction result in requirements_status
+                    requirements_status[action_key] = extraction_result
+                    
+                    # Check if ready
+                    is_ready = action_data.get("ready", False)
+                    
+                    # Check if this specific action was requested
+                    action_requested = requested_actions is None or action_key in requested_actions
                     
                     # ALWAYS disable app action branches for normal messages
-                    # Only enable if execution trigger detected AND requirements met
-                    if not execute_app_actions or not req_result["ready"]:
+                    # Only enable if execution trigger detected AND requirements met AND action requested
+                    if not execute_app_actions or not is_ready or not action_requested:
                         if not execute_app_actions:
                             logger.info(f"🔒 {branch.branch} disabled - no execution trigger in message")
+                        elif not action_requested:
+                            logger.info(f"🔒 {branch.branch} disabled - not in requested actions {requested_actions}")
                         else:
-                            logger.info(f"❌ {branch.branch} disabled - requirements not met. Missing: {req_result.get('missing', [])}")
+                            compulsory = action_data.get("compulsory", {})
+                            missing_fields = [k for k, v in compulsory.items() if v is None]
+                            logger.info(f"❌ {branch.branch} disabled - requirements not met. Missing: {missing_fields}")
                         
                         branch.enabled = False
                         
@@ -1291,7 +1415,7 @@ Provide a helpful, friendly response now:"""
                             text_branch = BranchDecision(
                                 branch="TEXT",
                                 enabled=True,
-                                reasoning=f"Checking requirements for {branch.branch.lower()} or providing guidance",
+                                reasoning=f"Extracting requirements for {branch.branch.lower()} or providing guidance",
                                 needs_clarification=False
                             )
                             branches.append(text_branch)
