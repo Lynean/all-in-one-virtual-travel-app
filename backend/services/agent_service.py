@@ -394,6 +394,27 @@ Now generate the budget as JSON:"""
                     return {"success": True, "data": budget_data, "type": "budget"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error in budget: {parse_error}")
+                    logger.error(f"❌ Failed JSON string:\n{json_str[:500]}...")
+                    
+                    # Try to fix common JSON issues
+                    try:
+                        fixed_json = json_str
+                        if not fixed_json.rstrip().endswith('}'):
+                            open_braces = fixed_json.count('{')
+                            close_braces = fixed_json.count('}')
+                            if open_braces > close_braces:
+                                logger.info(f"🔧 Attempting to fix truncated JSON")
+                                if fixed_json.rstrip()[-1] not in ['"', ',', '}', ']']:
+                                    fixed_json = fixed_json.rstrip() + '"'
+                                open_arrays = fixed_json.count('[') - fixed_json.count(']')
+                                open_objects = open_braces - close_braces
+                                fixed_json += ']' * open_arrays
+                                fixed_json += '}' * open_objects
+                                budget_data = json.loads(fixed_json)
+                                logger.info(f"✅ Successfully parsed fixed JSON!")
+                                return {"success": True, "data": budget_data, "type": "budget"}
+                    except Exception as fix_error:
+                        logger.error(f"❌ Failed to fix JSON: {fix_error}")
                     raise parse_error
             
             return {"success": False, "error": "Could not parse budget data - no JSON found"}
@@ -409,30 +430,18 @@ Now generate the budget as JSON:"""
         clarifications: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute Itinerary branch - generate day-by-day travel schedule"""
-        prompt = f"""Generate a detailed day-by-day travel itinerary based on the user's request.
+        prompt = f"""Generate a concise day-by-day travel itinerary based on the user's request.
 
 User Query: "{user_query}"
 Context: {json.dumps(context)}
 
-Create a customized itinerary with:
-- Day-by-day breakdown
-- Time slots for each activity
-- Activity title and description
-- Travel time between locations
-- Meal suggestions
-
-Consider:
-- Trip duration (extract from query or ask)
-- Destination and attractions
-- User preferences (pace, interests)
-- Realistic timing and travel logistics
-
-IMPORTANT:
+IMPORTANT REQUIREMENTS:
+- Limit to 3-5 activities per day (avoid overwhelming schedules)
+- Keep descriptions under 100 characters each
+- Keep tips under 80 characters each
 - Use 24-hour time format (e.g., "09:00", "14:30")
-- Include travel time between activities
-- Keep descriptions concise but informative
-- Add practical tips where relevant
-- Output ONLY valid JSON, no markdown
+- Include 2-4 days maximum unless specifically requested
+- Output ONLY valid JSON, no markdown, no extra text
 
 Format:
 {{
@@ -447,16 +456,15 @@ Format:
           "time": "09:00",
           "endTime": "11:00",
           "title": "Activity Title",
-          "description": "Brief description of activity",
-          "location": "Location name",
-          "tips": "Optional tips or notes"
+          "description": "Brief description under 100 chars",
+          "location": "Location name"
         }}
       ]
     }}
   ],
   "generalTips": [
-    "Overall tip 1",
-    "Overall tip 2"
+    "Tip 1 under 80 chars",
+    "Tip 2 under 80 chars"
   ]
 }}
 
@@ -485,6 +493,31 @@ Now generate the itinerary as JSON:"""
                     return {"success": True, "data": itinerary_data, "type": "itinerary"}
                 except json.JSONDecodeError as parse_error:
                     logger.error(f"❌ JSON decode error in itinerary: {parse_error}")
+                    logger.error(f"❌ Failed JSON string:\n{json_str[:500]}...")
+                    
+                    # Try to fix common JSON issues
+                    try:
+                        fixed_json = json_str
+                        if not fixed_json.rstrip().endswith('}'):
+                            # Count open vs close braces
+                            open_braces = fixed_json.count('{')
+                            close_braces = fixed_json.count('}')
+                            if open_braces > close_braces:
+                                logger.info(f"🔧 Attempting to fix truncated JSON ({open_braces} open, {close_braces} close)")
+                                # Close any open string
+                                if fixed_json.rstrip()[-1] not in ['"', ',', '}', ']']:
+                                    fixed_json = fixed_json.rstrip() + '"'
+                                # Close any open objects/arrays
+                                open_arrays = fixed_json.count('[') - fixed_json.count(']')
+                                open_objects = open_braces - close_braces
+                                fixed_json += ']' * open_arrays
+                                fixed_json += '}' * open_objects
+                                logger.info(f"🔧 Fixed JSON")
+                                itinerary_data = json.loads(fixed_json)
+                                logger.info(f"✅ Successfully parsed fixed JSON!")
+                                return {"success": True, "data": itinerary_data, "type": "itinerary"}
+                    except Exception as fix_error:
+                        logger.error(f"❌ Failed to fix JSON: {fix_error}")
                     raise parse_error
             
             return {"success": False, "error": "Could not parse itinerary data - no JSON found"}
