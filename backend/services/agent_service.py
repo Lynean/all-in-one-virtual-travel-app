@@ -47,49 +47,6 @@ class AgentService:
             logger.error(f"Failed to initialize Gemini model: {str(e)}")
             raise
     
-    def _initialize_tools(self) -> List:
-        """Initialize agent tools"""
-        return [WeatherTool(), CurrencyTool()]
-    
-    def _detect_execution_trigger(self, message: str) -> Dict[str, Any]:
-        """Detect if user wants to execute app actions"""
-        
-        # Try parsing as JSON
-        try:
-            if message.strip().startswith('{'):
-                data = json.loads(message)
-                if "app_action" in data or "app_actions" in data:
-                    actions = data.get("app_action") or data.get("app_actions")
-                    if isinstance(actions, str):
-                        actions = [actions]
-                    
-                    logger.info(f"🎯 JSON execution command: {actions}")
-                    return {"execute": True, "actions": actions, "format": "json"}
-        except json.JSONDecodeError:
-            pass
-        
-        # Check text triggers
-        message_lower = message.lower()
-        triggers = ["create the checklist", "generate checklist", "create itinerary", "generate itinerary", 
-                   "create budget", "generate budget", "create it now", "generate it now"]
-        
-        for trigger in triggers:
-            if trigger in message_lower:
-                logger.info(f"🎯 Text execution trigger: '{trigger}'")
-                actions = []
-                if "checklist" in trigger:
-                    actions = ["checklist"]
-                elif "itinerary" in trigger:
-                    actions = ["itinerary"]
-                elif "budget" in trigger:
-                    actions = ["budget"]
-                else:
-                    actions = None
-                
-                return {"execute": True, "actions": actions, "format": "text"}
-        
-        return {"execute": False, "actions": None, "format": "text"}
-    
     # ==================== REQUIREMENT EXTRACTION ====================
     
     async def _extract_all_requirements(
@@ -98,11 +55,17 @@ class AgentService:
         persistent_context: Dict[str, Any],
         current_context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Extract ALL travel requirements in ONE LLM call"""
-        
-        prompt = f"""Extract ALL travel planning information from the conversation.
+        """Extract any travel requirements in ONE LLM call"""
+
+        # Get stored requirements
+        stored_req = persistent_context.get('requirements', {})
+
+        prompt = f"""Extract ANY travel planning information from the conversation.
 
 User Query: "{user_query}"
+
+Previously Stored Requirements:
+{json.dumps(stored_req, indent=2)}
 
 Persistent Context:
 - Destinations: {persistent_context.get('destinations_mentioned', [])}
@@ -113,18 +76,18 @@ Persistent Context:
 Current Context:
 - Current location: {current_context.get('current_location', {})}
 
-EXTRACT and return ONLY valid JSON:
+EXTRACT and return ONLY valid JSON (update only fields mentioned in the query, keep others as null):
 
 {{
   "requirements": {{
-    "desired_location": "destination (null if not mentioned)",
-    "current_location": "user's location (null if not available)",
-    "number_of_days": "trip duration (null if not mentioned)",
-    "number_of_pax": "number of people (null if not mentioned, 1 if solo)",
-    "interests": ["food", "scenery"] or null,
-    "total_budget": "amount with currency (null if not mentioned)",
-    "accommodation": "hotel/hostel/airbnb (null if not mentioned)",
-    "dietary_restrictions": "halal/vegetarian/none (null if not mentioned)",
+    "desired_location": "destination (null if not mentioned in THIS query)",
+    "current_location": "user's location (null if not mentioned in THIS query)",
+    "number_of_days": "trip duration (null if not mentioned in THIS query)",
+    "number_of_pax": "number of people (null if not mentioned in THIS query, 1 if solo)",
+    "interests": ["food", "scenery"] or null (only if mentioned in THIS query),
+    "total_budget": "amount with currency (null if not mentioned in THIS query)",
+    "accommodation": "hotel/hostel/airbnb (null if not mentioned in THIS query)",
+    "dietary_restrictions": "halal/vegetarian/none (null if not mentioned in THIS query)",
     "travel_preference": {{
       "max_distance_km": 10,
       "transport_mode": "bus/taxi/rental/walking",
@@ -133,7 +96,9 @@ EXTRACT and return ONLY valid JSON:
     "specific_places": ["place1"] or null,
     "specific_attractions": ["attraction1"] or null
   }}
-}}"""
+}}
+
+IMPORTANT: Only extract what is mentioned in the current query, not from stored requirements."""
 
         try:
             response = await self.llm.ainvoke(prompt)
@@ -311,6 +276,7 @@ Extract and return ONLY valid JSON:
                 "budget_level": None,
                 "travel_style": None,
                 "current_location": None,
+                "requirements": {},  # Store all extracted requirements here
                 "created_items": {"checklists": [], "itineraries": [], "budgets": []}
             },
             "metadata": metadata or {}
@@ -431,12 +397,18 @@ Extract and return ONLY valid JSON:
             # REQUIREMENT EXTRACTION
             logger.info("📊 Extracting requirements...")
             
-            # Extract ALL requirements in ONE LLM call
-            common_requirements = await self._extract_all_requirements(
+            # Get previously stored requirements
+            stored_requirements = persistent_ctx.get("requirements", {})
+            
+            # Extract ALL requirements in ONE LLM call (merges with stored)
+            extracted_requirements = await self._extract_all_requirements(
                 message,
                 persistent_ctx,
                 context
             )
+            
+            # Merge with stored requirements (new values override stored)
+            common_requirements = {**stored_requirements, **{k: v for k, v in extracted_requirements.items() if v is not None}}
             
             # Check requirements for all action types
             requirements_status = {}
@@ -446,9 +418,13 @@ Extract and return ONLY valid JSON:
                     common_requirements
                 )
             
-            # Generate follow-up questions
-            follow_up_questions = []
+            # Store requirements persistently in session
+            persistent_ctx["requirements"] = common_requirements
+            session_data["persistent_context"] = persistent_ctx
+            
+            # Analyze what's ready and what's missing
             ready_actions = []
+            missing_info = {}
             
             for action_key, status in requirements_status.items():
                 action_data = status.get(action_key, {})
@@ -458,7 +434,8 @@ Extract and return ONLY valid JSON:
                 if is_ready:
                     ready_actions.append(action_key)
                 else:
-                    # Find first missing field
+                    # Collect missing fields for this action
+                    missing_fields = []
                     for field, value in compulsory.items():
                         is_missing = (
                             value is None or 
@@ -466,21 +443,26 @@ Extract and return ONLY valid JSON:
                             (isinstance(value, (list, dict)) and len(value) == 0)
                         )
                         if is_missing:
-                            field_name = field.replace("_", " ").title()
-                            follow_up_questions.append(f"What is your {field_name}?")
-                            break
+                            missing_fields.append(field.replace("_", " "))
+                    
+                    if missing_fields:
+                        missing_info[action_key] = missing_fields
             
-            # Build response
+            # Build response - mention what's needed, don't ask directly
             if ready_actions:
                 ready_list = ", ".join(ready_actions)
-                response_msg = f"✅ I have all information for: {ready_list}. "
+                response_msg = f"✅ I have all information needed for: {ready_list}. "
                 response_msg += f"Send {{\"app_action\": \"{ready_actions[0]}\"}} to create it."
-            elif follow_up_questions:
-                response_msg = follow_up_questions[0]
+            elif missing_info:
+                # Mention what's needed for the first incomplete action
+                first_action = list(missing_info.keys())[0]
+                missing_fields = missing_info[first_action]
+                fields_text = ", ".join(missing_fields)
+                response_msg = f"To create a {first_action}, I'll need your {fields_text}."
             else:
                 response_msg = "How can I help you plan your trip?"
             
-            logger.info(f"📋 Requirements: {len(ready_actions)} ready, {len(follow_up_questions)} missing")
+            logger.info(f"📋 Requirements: {len(ready_actions)} ready, {len(missing_info)} incomplete")
             
             # Update session history
             session_data["chat_history"].append({
