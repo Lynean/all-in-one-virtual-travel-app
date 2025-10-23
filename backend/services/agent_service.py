@@ -1382,7 +1382,13 @@ Provide a helpful, friendly response now:"""
                 else:
                     # Find first missing compulsory field
                     for field, value in compulsory.items():
-                        if value is None:
+                        # Check if value is missing (None, empty string, empty list, or empty dict)
+                        is_missing = (
+                            value is None or 
+                            value == "" or 
+                            (isinstance(value, (list, dict)) and len(value) == 0)
+                        )
+                        if is_missing:
                             field_name = field.replace("_", " ").title()
                             follow_up_questions.append(f"What is your {field_name}?")
                             break  # Only ask about first missing field per action
