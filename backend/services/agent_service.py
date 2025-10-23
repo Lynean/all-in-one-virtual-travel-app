@@ -57,30 +57,21 @@ class AgentService:
         self,
         user_query: str,
         persistent_context: Dict[str, Any],
-        current_context: Dict[str, Any]
+        context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Extract any travel requirements in ONE LLM call"""
 
         # Get stored requirements
-        stored_req = persistent_context.get('requirements', {})
-
         prompt = f"""Extract ANY travel planning information from the conversation.
+
 
 User Query: "{user_query}"
 
-Previously Stored Requirements:
-{json.dumps(stored_req, indent=2)}
-
-Persistent Context:
-- Destinations: {persistent_context.get('destinations_mentioned', [])}
-- Interests: {persistent_context.get('interests', [])}
-- Travel style: {persistent_context.get('travel_style')}
-- Budget level: {persistent_context.get('budget_level')}
-
-Current Context:
-- Current location: {current_context.get('current_location', {})}
-
-EXTRACT and return ONLY valid JSON (update only fields mentioned in the query, keep others as null):
+Stored Context:
+{json.dumps(persistent_context, indent=2)}
+Provided Context:
+{json.dumps(context, indent=2)}
+If user change their preference, feel free to modify the Stored Context. EXTRACT and return ONLY valid JSON (update only fields mentioned in the query):
 
 {{
   "requirements": {{
@@ -98,11 +89,11 @@ EXTRACT and return ONLY valid JSON (update only fields mentioned in the query, k
       "max_travel_time_hours": null
     }},
     "specific_places": ["place1"] or null,
-    "specific_attractions": ["attraction1"] or null
+    "specific_activities": ["activity1"] or null
   }}
 }}
 
-IMPORTANT: Only extract what is mentioned in the current query, not from stored requirements."""
+IMPORTANT: Extract what is mentioned in the current query and merge it with the existing context."""
 
         try:
             response = await self.llm.ainvoke(prompt)
@@ -186,6 +177,7 @@ IMPORTANT: Only extract what is mentioned in the current query, not from stored 
             }
             optional = {
                 "dietary_preference": requirements.get("dietary_restrictions"),
+                "travel_preference": requirements.get("travel_preference"),
                 "specific_places": requirements.get("specific_places")
             }
             
@@ -226,7 +218,7 @@ Extract and return ONLY valid JSON:
       "max_travel_time_hours": null
     }},
     "specific_places": ["place1"] or null,
-    "specific_activitys": ["activity1"] or null
+    "specific_activities": ["activity1"] or null
   }}
 }}"""
 
@@ -260,7 +252,7 @@ Extract and return ONLY valid JSON:
             "persistent_context": {
                 "desired_location": "",
                 "specific_places": [],
-                "specific_activitys": [],
+                "specific_activities": [],
                 "current_location": "",
                 "interests": [],
                 "number_of_days": None,
@@ -268,7 +260,6 @@ Extract and return ONLY valid JSON:
                 "total_budget": None,
                 "travel_preference": {},
                 "current_location": None,
-                "requirements": {},  # Store all extracted requirements here
                 "created_items": {"checklists": [], "itineraries": [], "budgets": []}
             },
             "metadata": metadata or {}
@@ -357,35 +348,44 @@ Extract and return ONLY valid JSON:
             
             # Merge interests
             if extracted_context.get("interests"):
-                current_interests = persistent_ctx.get("interests", [])
-                for interest in extracted_context["interests"]:
-                    if interest and interest not in current_interests:
-                        current_interests.append(interest)
-                persistent_ctx["interests"] = current_interests[:10]
-            
-            # Update budget level and travel style
-            if extracted_context.get("budget_level"):
-                persistent_ctx["budget_level"] = extracted_context["budget_level"]
-            if extracted_context.get("travel_style"):
-                persistent_ctx["travel_style"] = extracted_context["travel_style"]
-            
-            # Update current location
+                persistent_ctx["interests"] = extracted_context["interests"][:10]
+
+            # Update total budget and travel preference
+            if extracted_context.get("total_budget"):
+                persistent_ctx["total_budget"] = extracted_context["total_budget"]
+            if extracted_context.get("travel_preference"):
+                persistent_ctx["travel_preference"] = extracted_context["travel_preference"]
+
+            # Update current location based on query context
+            if context and context.get('created_items'):
+                persistent_ctx["created_items"] = context['created_items']
             if context and context.get('current_location'):
                 persistent_ctx["current_location"] = context['current_location']
-            
+
+            if context and context.get('specific_activities'):
+                persistent_ctx["specific_activities"] = context['specific_activities']
+
+            if context and context.get('specific_places'):
+                persistent_ctx["specific_places"] = context['specific_places']
+
+            if context and context.get('number_of_days'):
+                persistent_ctx["number_of_days"] = context['number_of_days']
+            if context and context.get('number_of_pax'):
+                persistent_ctx["number_of_pax"] = context['number_of_pax']
+
             session_data["persistent_context"] = persistent_ctx
             
             # Prepare context with defaults
             if not context:
                 context = {}
             if 'current_location' not in context:
-                context['current_location'] = {"name": "Unknown", "lat": 1.2894, "lng": 103.8499}
+                context['current_location'] = {"name": None, "lat": None, "lng": None}
             
             # REQUIREMENT EXTRACTION
             logger.info("📊 Extracting requirements...")
             
-            # Get previously stored requirements
-            stored_requirements = persistent_ctx.get("requirements", {})
+            # Get previously stored requirements from persistent_ctx itself
+            stored_requirements = persistent_ctx
             
             # Extract ALL requirements in ONE LLM call (merges with stored)
             extracted_requirements = await self._extract_all_requirements(
@@ -405,9 +405,8 @@ Extract and return ONLY valid JSON:
                     common_requirements
                 )
             
-            # Store requirements persistently in session
-            persistent_ctx["requirements"] = common_requirements
-            session_data["persistent_context"] = persistent_ctx
+            # Update persistent context with merged requirements
+            session_data["persistent_context"] = common_requirements
             
             # Analyze what's ready and what's missing for each action type
             ready_actions = []
@@ -438,49 +437,52 @@ Extract and return ONLY valid JSON:
             # Build single flat requirement object for response
             flat_requirements = {}
             for key, value in common_requirements.items():
-                # Convert values to boolean (Value if filled, null if missing)
+                # Store actual values (not boolean)
                 flat_requirements[key] = value
             
-            # Detect if user is asking for specific action
-            
-            # Build AI response - answer naturally + recommend tools + mention missing info
+            # Build AI response - guide users to complete requirements
             if ready_actions:
-                # Prioritize requested action if specified
+                # Some actions are ready
+                ready_list = ", ".join(ready_actions)
+                
                 ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
 
 Current conversation context:
 - Stored requirements: {json.dumps(common_requirements, indent=2)}
-- Ready actions: {ready_actions}
+- Ready actions: {ready_list}
 
 Generate a natural, helpful response that:
-1. Acknowledges what they asked for
-2. Tells them you can create the {primary_action}
-3. Shows the command: {{"app_action": "{primary_action}"}}
+1. Answers their question or acknowledges their information
+2. Mentions which tools are ready: {ready_list}
+3. If not all tools are ready, naturally guide them to provide missing info
+4. Show available commands like {{"app_action": "checklist"}}
 
-Keep response conversational and under 2 sentences. Don't mention other actions unless relevant."""
+Keep response conversational and under 3 sentences."""
 
                 try:
                     ai_response = await self.llm.ainvoke(ai_response_prompt)
                     response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
                 except Exception as e:
                     logger.error(f"Error generating AI response: {e}")
-                    response_msg = f"Perfect! I can create your {primary_action}. Send {{\"app_action\": \"{primary_action}\"}} to get started."
+                    response_msg = f"Great! I can help you create: {ready_list}. Send {{\"app_action\": \"{ready_actions[0]}\"}} to get started."
                     
             elif missing_info:
-                # Missing info - answer naturally + mention what's needed
-                first_action = list(missing_info.keys())[0]
-                missing_fields = missing_info[first_action]
+                # Missing info - guide to complete requirements for all actions
+                # Collect all unique missing fields across all actions
+                all_missing = set()
+                for action_missing in missing_info.values():
+                    all_missing.update(action_missing)
                 
                 ai_response_prompt = f"""You are a friendly travel assistant AI. The user said: "{message}"
 
 Current conversation context:
 - Stored requirements: {json.dumps(common_requirements, indent=2)}
-- Missing for {first_action}: {missing_fields}
+- Missing information needed: {list(all_missing)}
 
 Generate a natural, helpful response that:
-1. Answers their question or acknowledges their information
-2. Naturally mentions you can create a {first_action}
-3. Mentions you'll need their: {", ".join(missing_fields)}
+1. Acknowledges what they shared
+2. Naturally mentions 1-2 key pieces of missing information from the list
+3. Briefly explains how this helps with travel planning
 
 Keep response conversational and under 3 sentences. Make it sound natural, not like a form."""
 
@@ -489,8 +491,8 @@ Keep response conversational and under 3 sentences. Make it sound natural, not l
                     response_msg = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
                 except Exception as e:
                     logger.error(f"Error generating AI response: {e}")
-                    fields_text = ", ".join(missing_fields)
-                    response_msg = f"I can help create a {first_action} for you. To do that, I'll need your {fields_text}."
+                    fields_text = ", ".join(list(all_missing)[:2])
+                    response_msg = f"Thanks for that info! To help plan your trip, I'd love to know about your {fields_text}."
                     
             else:
                 # No specific action - general travel assistant response
