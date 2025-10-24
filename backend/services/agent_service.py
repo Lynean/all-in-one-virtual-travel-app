@@ -188,6 +188,251 @@ IMPORTANT: Extract what is mentioned in the current query and merge it with the 
         
         return {}
     
+    # ==================== APP ACTION EXECUTION ====================
+    
+    async def _execute_app_action(
+        self,
+        action_type: str,
+        session_data: Dict[str, Any],
+        session_id: str,
+        message: str
+    ) -> ChatResponse:
+        """Execute app action (checklist, itinerary, or budget) based on persistent context"""
+        try:
+            persistent_ctx = session_data.get("persistent_context", {})
+            
+            # Check if requirements are met for this action
+            requirements_check = self._check_action_requirements(action_type, persistent_ctx)
+            action_data = requirements_check.get(action_type, {})
+            is_ready = action_data.get("ready", False)
+            compulsory = action_data.get("compulsory", {})
+            
+            if not is_ready:
+                # Missing required information
+                missing_fields = []
+                for field, value in compulsory.items():
+                    is_missing = (
+                        value is None or 
+                        value == "" or 
+                        (isinstance(value, (list, dict)) and len(value) == 0)
+                    )
+                    if is_missing:
+                        missing_fields.append(field.replace("_", " "))
+                
+                missing_text = ", ".join(missing_fields)
+                response_msg = f"I can't create the {action_type} yet. I still need: {missing_text}. Please provide this information first."
+                
+                return ChatResponse(
+                    session_id=session_id,
+                    message=response_msg,
+                    map_actions=[],
+                    app_actions=[],
+                    clarifications=[],
+                    suggestions=[],
+                    metadata={
+                        "error": True,
+                        "error_message": f"Missing requirements: {missing_text}",
+                        "missing_fields": missing_fields
+                    }
+                )
+            
+            # Execute the action based on type
+            if action_type == "checklist":
+                result = await self._create_checklist(persistent_ctx)
+            elif action_type == "itinerary":
+                result = await self._create_itinerary(persistent_ctx)
+            elif action_type == "budget":
+                result = await self._create_budget(persistent_ctx)
+            else:
+                raise ValueError(f"Unknown action type: {action_type}")
+            
+            # Store created item in persistent context
+            if "created_items" not in persistent_ctx:
+                persistent_ctx["created_items"] = {"checklists": [], "itineraries": [], "budgets": []}
+            
+            item_key = f"{action_type}s" if action_type != "budget" else "budgets"
+            if item_key not in persistent_ctx["created_items"]:
+                persistent_ctx["created_items"][item_key] = []
+            
+            persistent_ctx["created_items"][item_key].append({
+                "created_at": datetime.utcnow().isoformat(),
+                "data": result
+            })
+            
+            # Update session
+            session_data["persistent_context"] = persistent_ctx
+            if self.redis:
+                await self.redis.set_session(session_id, session_data)
+            else:
+                self._memory_sessions[session_id] = session_data
+            
+            response_msg = f"Great! I've created your {action_type}. Check the app_actions in the response!"
+            
+            return ChatResponse(
+                session_id=session_id,
+                message=response_msg,
+                map_actions=[],
+                app_actions=[{
+                    "type": action_type,
+                    "data": result
+                }],
+                clarifications=[],
+                suggestions=[],
+                metadata={
+                    "model": "gemini-2.5-flash",
+                    "action_executed": action_type,
+                    "requirements_used": persistent_ctx
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Error executing {action_type}: {str(e)}", exc_info=True)
+            return ChatResponse(
+                session_id=session_id,
+                message=f"Sorry, I encountered an error creating the {action_type}: {str(e)}",
+                map_actions=[],
+                app_actions=[],
+                clarifications=[],
+                suggestions=[],
+                metadata={"error": True, "error_message": str(e)}
+            )
+    
+    async def _create_checklist(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a travel checklist based on requirements"""
+        prompt = f"""Create a comprehensive travel checklist based on these requirements:
+
+Destination: {requirements.get('desired_location')}
+Duration: {requirements.get('number_of_days')} days
+Number of travelers: {requirements.get('number_of_pax')}
+Accommodation: {requirements.get('accommodation')}
+Interests: {requirements.get('interests')}
+Dietary restrictions: {requirements.get('dietary_restrictions')}
+
+Generate a detailed checklist in JSON format:
+{{
+  "before_trip": ["item1", "item2", ...],
+  "packing": ["item1", "item2", ...],
+  "documents": ["item1", "item2", ...],
+  "during_trip": ["item1", "item2", ...],
+  "after_trip": ["item1", "item2", ...]
+}}
+
+Make it specific to the destination and requirements."""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                return json.loads(response_text[json_start:json_end])
+            
+            return {"error": "Failed to parse checklist"}
+        except Exception as e:
+            logger.error(f"Error creating checklist: {e}")
+            return {"error": str(e)}
+    
+    async def _create_itinerary(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a travel itinerary based on requirements"""
+        desired_loc = requirements.get("desired_location")
+        destinations = [desired_loc] if isinstance(desired_loc, str) else desired_loc
+        
+        prompt = f"""Create a detailed day-by-day travel itinerary based on these requirements:
+
+Destinations: {destinations}
+Interests: {requirements.get('interests')}
+Duration: {requirements.get('number_of_days')} days
+Travel preferences: {requirements.get('travel_preference')}
+Specific attractions: {requirements.get('specific_attractions')}
+
+Generate a detailed itinerary in JSON format:
+{{
+  "days": [
+    {{
+      "day": 1,
+      "title": "Day title",
+      "activities": [
+        {{
+          "time": "09:00",
+          "activity": "Activity name",
+          "location": "Place name",
+          "duration": "2 hours",
+          "description": "Brief description"
+        }}
+      ]
+    }}
+  ],
+  "tips": ["tip1", "tip2", ...],
+  "estimated_costs": {{"transport": "XXX", "activities": "XXX"}}
+}}
+
+Make it practical and aligned with their interests."""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                return json.loads(response_text[json_start:json_end])
+            
+            return {"error": "Failed to parse itinerary"}
+        except Exception as e:
+            logger.error(f"Error creating itinerary: {e}")
+            return {"error": str(e)}
+    
+    async def _create_budget(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a travel budget based on requirements"""
+        desired_loc = requirements.get("desired_location")
+        destinations = [desired_loc] if isinstance(desired_loc, str) else desired_loc
+        
+        prompt = f"""Create a detailed travel budget breakdown based on these requirements:
+
+Total Budget: {requirements.get('total_budget')}
+Destinations: {destinations}
+Current location: {requirements.get('current_location')}
+Duration: {requirements.get('number_of_days')} days
+Number of travelers: {requirements.get('number_of_pax')}
+Dietary preferences: {requirements.get('dietary_restrictions')}
+Travel preferences: {requirements.get('travel_preference')}
+Specific places: {requirements.get('specific_places')}
+
+Generate a detailed budget in JSON format:
+{{
+  "total_budget": "amount",
+  "breakdown": {{
+    "accommodation": {{"amount": "XXX", "details": "description"}},
+    "transport": {{"amount": "XXX", "details": "description"}},
+    "food": {{"amount": "XXX", "details": "description"}},
+    "activities": {{"amount": "XXX", "details": "description"}},
+    "shopping": {{"amount": "XXX", "details": "description"}},
+    "emergency": {{"amount": "XXX", "details": "description"}}
+  }},
+  "daily_budget": "XXX per day",
+  "tips": ["tip1", "tip2", ...]
+}}
+
+Be realistic about costs for the destination."""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                return json.loads(response_text[json_start:json_end])
+            
+            return {"error": "Failed to parse budget"}
+        except Exception as e:
+            logger.error(f"Error creating budget: {e}")
+            return {"error": str(e)}
+    
     # ==================== CONTEXT EXTRACTION ====================
     
     async def _extract_context_from_message(
@@ -196,9 +441,13 @@ IMPORTANT: Extract what is mentioned in the current query and merge it with the 
         current_context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Extract key information from user message"""
+        # Include latest_response for context if user gives short answers
+        latest_response = current_context.get("latest_response", "")
+        context_hint = f"\nLatest AI Question: {latest_response}" if latest_response else ""
+        
         prompt = f"""Extract key travel information from this message.
 
-User Message: "{message}"
+User Message: "{message}"{context_hint}
 Current Context: {json.dumps(current_context)}
 
 Extract and return ONLY valid JSON:
@@ -220,7 +469,9 @@ Extract and return ONLY valid JSON:
     "specific_places": ["place1"] or null,
     "specific_activities": ["activity1"] or null
   }}
-}}"""
+}}
+
+IMPORTANT: If the user gives a short answer, use the Latest AI Question context to understand what they're answering."""
 
         try:
             response = await self.llm.ainvoke(prompt)
@@ -260,6 +511,7 @@ Extract and return ONLY valid JSON:
                 "total_budget": None,
                 "travel_preference": {},
                 "current_location": None,
+                "latest_response": None,
                 "created_items": {"checklists": [], "itineraries": [], "budgets": []}
             },
             "metadata": metadata or {}
@@ -334,7 +586,22 @@ Extract and return ONLY valid JSON:
             # Update last activity
             session_data["last_activity"] = datetime.utcnow().isoformat()
             
-            # Extract context from message
+            # Prepare context with defaults
+            if not context:
+                context = {}
+            
+            # Check if this is an app_action request
+            app_action = context.get("app_action")
+            if app_action and app_action in ["checklist", "itinerary", "budget"]:
+                logger.info(f"🎬 Executing app action: {app_action}")
+                return await self._execute_app_action(
+                    app_action,
+                    session_data,
+                    session_id,
+                    message
+                )
+            
+            # Extract context from message (considering latest_response for short answers)
             extracted_context = await self._extract_context_from_message(
                 message,
                 session_data.get("persistent_context", {})
@@ -512,6 +779,10 @@ Keep response conversational and under 2 sentences."""
                     response_msg = "Hello! I'm your travel assistant. I can help you create checklists, itineraries, and budgets for your trip. How can I assist you today?"
             
             logger.info(f"📋 Requirements: {len(ready_actions)} ready, {len(missing_info)} incomplete")
+            
+            # Store latest AI response in persistent context for short answer context
+            common_requirements["latest_response"] = response_msg
+            session_data["persistent_context"] = common_requirements
             
             # Update session history
             session_data["chat_history"].append({
