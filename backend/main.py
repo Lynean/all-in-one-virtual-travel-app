@@ -349,6 +349,42 @@ async def create_session(request: SessionRequest):
         raise HTTPException(status_code=500, detail=f"Session error: {str(e)}")
 
 
+@app.get("/api/session/{session_id}/requirements")
+async def get_session_requirements(session_id: str):
+    """
+    Get the requirements/persistent context for a session
+    
+    Args:
+        session_id: The session ID to retrieve requirements for
+    
+    Returns:
+        JSON object containing the session's persistent_context (requirements)
+    """
+    try:
+        # Get session data from Redis or memory
+        if redis_service:
+            session_data = await redis_service.get_session(session_id)
+        else:
+            session_data = agent_service._memory_sessions.get(session_id)
+        
+        if not session_data:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        # Return the persistent_context which contains all requirements
+        persistent_context = session_data.get("persistent_context", {})
+        
+        return {
+            "session_id": session_id,
+            "requirements": persistent_context
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving session requirements: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error retrieving requirements: {str(e)}")
+
+
 @app.delete("/api/session/{session_id}")
 async def delete_session(session_id: str, user_id: str):
     """
