@@ -455,7 +455,6 @@ Generate a natural, helpful response that:
 1. Answers their question or acknowledges their information
 2. Mentions which tools are ready: {ready_list}
 3. If not all tools are ready, naturally guide them to provide missing info
-4. Show available commands like {{"app_action": "checklist"}}
 
 Keep response conversational and under 3 sentences."""
 
