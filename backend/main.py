@@ -375,7 +375,7 @@ async def get_session_requirements(session_id: str):
         
         return {
             "session_id": session_id,
-            "requirements": persistent_context
+            "persistent_context": persistent_context
         }
         
     except HTTPException:
