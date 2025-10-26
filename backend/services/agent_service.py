@@ -308,28 +308,38 @@ Accommodation: {requirements.get('accommodation')}
 Interests: {requirements.get('interests')}
 Dietary restrictions: {requirements.get('dietary_restrictions')}
 
-Generate a detailed checklist in JSON format:
+Generate a detailed checklist in VALID JSON format (no trailing commas, no ellipsis):
 {{
-  "before_trip": ["item1", "item2", ...],
-  "packing": ["item1", "item2", ...],
-  "documents": ["item1", "item2", ...],
-  "during_trip": ["item1", "item2", ...],
-  "after_trip": ["item1", "item2", ...]
+  "before_trip": ["book flights", "book accommodation", "get travel insurance"],
+  "packing": ["passport", "clothes", "toiletries"],
+  "documents": ["passport", "visa", "travel insurance"],
+  "during_trip": ["check in daily", "stay hydrated", "take photos"],
+  "after_trip": ["unpack", "review expenses", "share photos"]
 }}
 
-Make it specific to the destination and requirements."""
+Make it specific to the destination and requirements. Return ONLY valid JSON, no markdown."""
 
         try:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
+            # Clean markdown code blocks
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
             # Extract JSON
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
             if json_start >= 0 and json_end > json_start:
-                return json.loads(response_text[json_start:json_end])
+                result = json.loads(response_text[json_start:json_end])
+                return result
             
             return {"error": "Failed to parse checklist"}
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error in checklist: {e}\nResponse: {response_text}")
+            return {"error": f"Invalid JSON: {str(e)}"}
         except Exception as e:
             logger.error(f"Error creating checklist: {e}")
             return {"error": str(e)}
@@ -347,40 +357,73 @@ Duration: {requirements.get('number_of_days')} days
 Travel preferences: {requirements.get('travel_preference')}
 Specific attractions: {requirements.get('specific_attractions')}
 
-Generate a detailed itinerary in JSON format:
+Generate a detailed itinerary in VALID JSON format (no trailing commas, no ellipsis):
 {{
   "days": [
     {{
       "day": 1,
-      "title": "Day title",
+      "title": "Arrival and Exploration",
       "activities": [
         {{
           "time": "09:00",
-          "activity": "Activity name",
+          "activity": "Check-in at hotel",
+          "location": "Hotel name",
+          "duration": "1 hour",
+          "description": "Check-in and freshen up"
+        }},
+        {{
+          "time": "11:00",
+          "activity": "Visit landmark",
           "location": "Place name",
           "duration": "2 hours",
-          "description": "Brief description"
+          "description": "Explore the area"
+        }}
+      ]
+    }},
+    {{
+      "day": 2,
+      "title": "Cultural Experience",
+      "activities": [
+        {{
+          "time": "10:00",
+          "activity": "Museum visit",
+          "location": "Museum name",
+          "duration": "3 hours",
+          "description": "Learn local history"
         }}
       ]
     }}
   ],
-  "tips": ["tip1", "tip2", ...],
-  "estimated_costs": {{"transport": "XXX", "activities": "XXX"}}
+  "tips": ["Bring comfortable shoes", "Book tickets in advance"],
+  "estimated_costs": {{
+    "transport": "50 USD",
+    "activities": "100 USD"
+  }}
 }}
 
-Make it practical and aligned with their interests."""
+Make it practical and aligned with their interests. Return ONLY valid JSON, no markdown."""
 
         try:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
+            # Clean markdown code blocks
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
             # Extract JSON
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
             if json_start >= 0 and json_end > json_start:
-                return json.loads(response_text[json_start:json_end])
+                result = json.loads(response_text[json_start:json_end])
+                return result
             
             return {"error": "Failed to parse itinerary"}
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error in itinerary: {e}\nResponse: {response_text}")
+            return {"error": f"Invalid JSON: {str(e)}"}
         except Exception as e:
             logger.error(f"Error creating itinerary: {e}")
             return {"error": str(e)}
@@ -401,34 +444,62 @@ Dietary preferences: {requirements.get('dietary_restrictions')}
 Travel preferences: {requirements.get('travel_preference')}
 Specific places: {requirements.get('specific_places')}
 
-Generate a detailed budget in JSON format:
+Generate a detailed budget in VALID JSON format (no trailing commas, no ellipsis):
 {{
-  "total_budget": "amount",
+  "total_budget": "2000 USD",
   "breakdown": {{
-    "accommodation": {{"amount": "XXX", "details": "description"}},
-    "transport": {{"amount": "XXX", "details": "description"}},
-    "food": {{"amount": "XXX", "details": "description"}},
-    "activities": {{"amount": "XXX", "details": "description"}},
-    "shopping": {{"amount": "XXX", "details": "description"}},
-    "emergency": {{"amount": "XXX", "details": "description"}}
+    "accommodation": {{
+      "amount": "600 USD",
+      "details": "Hotel for 5 nights at 120 USD per night"
+    }},
+    "transport": {{
+      "amount": "400 USD",
+      "details": "Flights and local transport"
+    }},
+    "food": {{
+      "amount": "500 USD",
+      "details": "Daily meals and dining"
+    }},
+    "activities": {{
+      "amount": "300 USD",
+      "details": "Tours and entrance fees"
+    }},
+    "shopping": {{
+      "amount": "150 USD",
+      "details": "Souvenirs and local products"
+    }},
+    "emergency": {{
+      "amount": "50 USD",
+      "details": "Emergency fund"
+    }}
   }},
-  "daily_budget": "XXX per day",
-  "tips": ["tip1", "tip2", ...]
+  "daily_budget": "100 USD per day",
+  "tips": ["Book accommodation early for discounts", "Use local transport to save money"]
 }}
 
-Be realistic about costs for the destination."""
+Be realistic about costs for the destination. Return ONLY valid JSON, no markdown."""
 
         try:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
+            # Clean markdown code blocks
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
             # Extract JSON
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
             if json_start >= 0 and json_end > json_start:
-                return json.loads(response_text[json_start:json_end])
+                result = json.loads(response_text[json_start:json_end])
+                return result
             
             return {"error": "Failed to parse budget"}
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error in budget: {e}\nResponse: {response_text}")
+            return {"error": f"Invalid JSON: {str(e)}"}
         except Exception as e:
             logger.error(f"Error creating budget: {e}")
             return {"error": str(e)}
