@@ -686,6 +686,24 @@ IMPORTANT: If the user gives a short answer, use the Latest AI Question context 
                     message
                 )
             
+            # Update current location based on query context
+            if context and context.get('created_items'):
+                persistent_ctx["created_items"] = context['created_items']
+            if context and context.get('current_location'):
+                if context['current_location'].get('address') and not persistent_ctx['current_location']:
+                    persistent_ctx["current_location"] = context['current_location']['address']
+
+            if context and context.get('specific_activities'):
+                persistent_ctx["specific_activities"] = context['specific_activities']
+
+            if context and context.get('specific_places'):
+                persistent_ctx["specific_places"] = context['specific_places']
+
+            if context and context.get('number_of_days'):
+                persistent_ctx["number_of_days"] = context['number_of_days']
+            if context and context.get('number_of_pax'):
+                persistent_ctx["number_of_pax"] = context['number_of_pax']
+
             # Extract context from message (considering latest_response for short answers)
             extracted_context = await self._extract_context_from_message(
                 message,
@@ -707,23 +725,6 @@ IMPORTANT: If the user gives a short answer, use the Latest AI Question context 
                 persistent_ctx["total_budget"] = extracted_context["total_budget"]
             if extracted_context.get("travel_preference"):
                 persistent_ctx["travel_preference"] = extracted_context["travel_preference"]
-
-            # Update current location based on query context
-            if context and context.get('created_items'):
-                persistent_ctx["created_items"] = context['created_items']
-            if context and context.get('current_location'):
-                persistent_ctx["current_location"] = context['current_location']
-
-            if context and context.get('specific_activities'):
-                persistent_ctx["specific_activities"] = context['specific_activities']
-
-            if context and context.get('specific_places'):
-                persistent_ctx["specific_places"] = context['specific_places']
-
-            if context and context.get('number_of_days'):
-                persistent_ctx["number_of_days"] = context['number_of_days']
-            if context and context.get('number_of_pax'):
-                persistent_ctx["number_of_pax"] = context['number_of_pax']
 
             session_data["persistent_context"] = persistent_ctx
             
