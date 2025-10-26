@@ -190,6 +190,22 @@ IMPORTANT: Extract what is mentioned in the current query and merge it with the 
     
     # ==================== APP ACTION EXECUTION ====================
     
+    def _clean_json_response(self, text: str) -> str:
+        """Clean and extract JSON from LLM response"""
+        # Remove markdown code blocks
+        if '```json' in text:
+            text = text.split('```json')[1].split('```')[0].strip()
+        elif '```' in text:
+            text = text.split('```')[1].split('```')[0].strip()
+        
+        # Extract JSON content
+        json_start = text.find('{')
+        json_end = text.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            return text[json_start:json_end]
+        
+        return text
+    
     async def _execute_app_action(
         self,
         action_type: str,
@@ -323,20 +339,10 @@ Make it specific to the destination and requirements. Return ONLY valid JSON, no
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Clean markdown code blocks
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
-            
-            # Extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                result = json.loads(response_text[json_start:json_end])
-                return result
-            
-            return {"error": "Failed to parse checklist"}
+            # Clean and extract JSON
+            clean_json = self._clean_json_response(response_text)
+            result = json.loads(clean_json)
+            return result
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in checklist: {e}\nResponse: {response_text}")
             return {"error": f"Invalid JSON: {str(e)}"}
@@ -349,81 +355,86 @@ Make it specific to the destination and requirements. Return ONLY valid JSON, no
         desired_loc = requirements.get("desired_location")
         destinations = [desired_loc] if isinstance(desired_loc, str) else desired_loc
         
-        prompt = f"""Create a detailed day-by-day travel itinerary based on these requirements:
+        num_days = requirements.get('number_of_days', 3)
+        
+        prompt = f"""Create a detailed {num_days}-day travel itinerary for {destinations}.
 
-Destinations: {destinations}
-Interests: {requirements.get('interests')}
-Duration: {requirements.get('number_of_days')} days
-Travel preferences: {requirements.get('travel_preference')}
-Specific attractions: {requirements.get('specific_attractions')}
+Requirements:
+- Interests: {requirements.get('interests')}
+- Travel preferences: {requirements.get('travel_preference')}
+- Specific attractions: {requirements.get('specific_attractions')}
 
-Generate a detailed itinerary in VALID JSON format (no trailing commas, no ellipsis):
+CRITICAL: Return ONLY valid JSON. No markdown, no code blocks, no explanations.
+CRITICAL: Maintain proper JSON structure with correct comma placement.
+CRITICAL: All fields must be in correct order within each object.
+
+Return this exact structure with {num_days} days:
+
 {{
   "days": [
     {{
       "day": 1,
-      "title": "Arrival and Exploration",
+      "title": "Day 1 Title",
       "activities": [
         {{
           "time": "09:00",
-          "activity": "Check-in at hotel",
-          "location": "Hotel name",
-          "duration": "1 hour",
-          "description": "Check-in and freshen up"
+          "activity": "Activity name",
+          "location": "Location name",
+          "duration": "2 hours",
+          "description": "Activity description"
         }},
         {{
-          "time": "11:00",
-          "activity": "Visit landmark",
-          "location": "Place name",
-          "duration": "2 hours",
-          "description": "Explore the area"
-        }}
-      ]
-    }},
-    {{
-      "day": 2,
-      "title": "Cultural Experience",
-      "activities": [
-        {{
-          "time": "10:00",
-          "activity": "Museum visit",
-          "location": "Museum name",
-          "duration": "3 hours",
-          "description": "Learn local history"
+          "time": "12:00",
+          "activity": "Lunch",
+          "location": "Restaurant name",
+          "duration": "1 hour",
+          "description": "Meal description"
         }}
       ]
     }}
   ],
-  "tips": ["Bring comfortable shoes", "Book tickets in advance"],
+  "tips": ["Tip 1", "Tip 2", "Tip 3"],
   "estimated_costs": {{
     "transport": "50 USD",
-    "activities": "100 USD"
+    "activities": "100 USD",
+    "food": "75 USD"
   }}
 }}
 
-Make it practical and aligned with their interests. Return ONLY valid JSON, no markdown."""
+Make activities realistic and aligned with their interests. Create exactly {num_days} days."""
 
         try:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Clean markdown code blocks
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
+            # Clean and extract JSON
+            clean_json = self._clean_json_response(response_text)
+            result = json.loads(clean_json)
             
-            # Extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                result = json.loads(response_text[json_start:json_end])
-                return result
+            # Validate structure
+            if "days" not in result or not isinstance(result["days"], list):
+                raise ValueError("Invalid itinerary structure: missing 'days' array")
             
-            return {"error": "Failed to parse itinerary"}
+            return result
         except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error in itinerary: {e}\nResponse: {response_text}")
-            return {"error": f"Invalid JSON: {str(e)}"}
+            logger.error(f"JSON decode error in itinerary: {e}\nResponse: {response_text[:500]}")
+            # Return a fallback basic itinerary
+            return {
+                "error": f"JSON parsing failed: {str(e)}",
+                "days": [{
+                    "day": 1,
+                    "title": "Exploration Day",
+                    "activities": [{
+                        "time": "10:00",
+                        "activity": "Explore destination",
+                        "location": str(destinations[0]) if destinations else "City center",
+                        "duration": "3 hours",
+                        "description": "General exploration and sightseeing"
+                    }]
+                }],
+                "tips": ["Check weather before going out", "Book attractions in advance"],
+                "estimated_costs": {"transport": "50 USD", "activities": "100 USD"}
+            }
         except Exception as e:
             logger.error(f"Error creating itinerary: {e}")
             return {"error": str(e)}
@@ -483,20 +494,10 @@ Be realistic about costs for the destination. Return ONLY valid JSON, no markdow
             response = await self.llm.ainvoke(prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Clean markdown code blocks
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
-            
-            # Extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                result = json.loads(response_text[json_start:json_end])
-                return result
-            
-            return {"error": "Failed to parse budget"}
+            # Clean and extract JSON
+            clean_json = self._clean_json_response(response_text)
+            result = json.loads(clean_json)
+            return result
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in budget: {e}\nResponse: {response_text}")
             return {"error": f"Invalid JSON: {str(e)}"}
