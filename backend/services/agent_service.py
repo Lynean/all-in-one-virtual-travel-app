@@ -315,6 +315,9 @@ IMPORTANT: Extract what is mentioned in the current query and merge it with the 
     
     async def _create_checklist(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
         """Create a travel checklist based on requirements"""
+        language = requirements.get('language', 'en')
+        language_instruction = f"Generate the response in {language} language." if language != 'en' else ""
+        
         prompt = f"""Create a comprehensive travel checklist based on these requirements:
 
 Destination: {requirements.get('desired_location')}
@@ -323,6 +326,8 @@ Number of travelers: {requirements.get('number_of_pax')}
 Accommodation: {requirements.get('accommodation')}
 Interests: {requirements.get('interests')}
 Dietary restrictions: {requirements.get('dietary_restrictions')}
+
+{language_instruction}
 
 Generate a detailed checklist in VALID JSON format (no trailing commas, no ellipsis):
 {{
@@ -356,6 +361,8 @@ Make it specific to the destination and requirements. Return ONLY valid JSON, no
         destinations = [desired_loc] if isinstance(desired_loc, str) else desired_loc
         
         num_days = requirements.get('number_of_days', 3)
+        language = requirements.get('language', 'en')
+        language_instruction = f"Generate all text content (titles, descriptions) in {language} language." if language != 'en' else ""
         
         prompt = f"""Create a detailed {num_days}-day travel itinerary for {destinations}.
 
@@ -363,6 +370,8 @@ Requirements:
 - Interests: {requirements.get('interests')}
 - Travel preferences: {requirements.get('travel_preference')}
 - Specific attractions: {requirements.get('specific_attractions')}
+
+{language_instruction}
 
 CRITICAL: Return ONLY valid JSON. No markdown, no code blocks, no explanations.
 CRITICAL: Maintain proper JSON structure with correct comma placement.
@@ -443,6 +452,8 @@ Make activities realistic and aligned with their interests. Create exactly {num_
         """Create a travel budget based on requirements"""
         desired_loc = requirements.get("desired_location")
         destinations = [desired_loc] if isinstance(desired_loc, str) else desired_loc
+        language = requirements.get('language', 'en')
+        language_instruction = f"Generate all text content (details, tips) in {language} language." if language != 'en' else ""
         
         prompt = f"""Create a detailed travel budget breakdown based on these requirements:
 
@@ -454,6 +465,8 @@ Number of travelers: {requirements.get('number_of_pax')}
 Dietary preferences: {requirements.get('dietary_restrictions')}
 Travel preferences: {requirements.get('travel_preference')}
 Specific places: {requirements.get('specific_places')}
+
+{language_instruction}
 
 Generate a detailed budget in VALID JSON format (no trailing commas, no ellipsis):
 {{
