@@ -160,7 +160,6 @@ IMPORTANT: Extract what is mentioned in the current query and merge it with the 
             ready = (
                 desired_locations is not None and 
                 len(desired_locations) > 0 and
-                len(interests) >= 2 and
                 requirements.get("number_of_days") is not None
             )
             
